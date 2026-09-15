@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Version=1.5
+Name=Browser Picker
+GenericName=Browser Chooser
+Comment=Choose where links and local files open
+Exec=browser-picker
+Icon=io.github.TheAnachronism.BrowserPicker
+Terminal=false
+Categories=Network;GTK;
+StartupNotify=true
+StartupWMClass=io.github.TheAnachronism.BrowserPicker
+Keywords=Browser;Chooser;Links;Routing;

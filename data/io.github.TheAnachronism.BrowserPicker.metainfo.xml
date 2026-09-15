@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.TheAnachronism.BrowserPicker</id>
+  <name>Browser Picker</name>
+  <summary>Choose where links and local files open</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <developer id="io.github.theanachronism">
+    <name>TheAnachronism</name>
+  </developer>
+  <url type="homepage">https://github.com/TheAnachronism/linux-browser-picker</url>
+  <url type="bugtracker">https://github.com/TheAnachronism/linux-browser-picker/issues</url>
+  <description>
+    <p>Browser Picker provides a native Linux interface for choosing where links and local files open.</p>
+  </description>
+  <launchable type="desktop-id">io.github.TheAnachronism.BrowserPicker.desktop</launchable>
+  <categories>
+    <category>Network</category>
+    <category>Utility</category>
+  </categories>
+  <content_rating type="oars-1.1"/>
+</component>

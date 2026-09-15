@@ -1,0 +1,32 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: browser-picker 0.1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+msgid "Browser Picker"
+msgstr ""
+
+msgid "Browser Chooser"
+msgstr ""
+
+msgid "Choose where links and local files open"
+msgstr ""
+
+msgid "Browser;Chooser;Links;Routing;"
+msgstr ""
+
+msgid "Browser Picker provides a native Linux interface for choosing where links and local files open."
+msgstr ""
+
+msgid "Choose where links and local files open."
+msgstr ""
+
+msgid "Configure browser destinations and routing rules."
+msgstr ""
+
+msgid "Unknown argument"
+msgstr ""
+
+msgid "Browser Picker\nChoose where links and local files open.\n\nUsage:\n  browser-picker\n  browser-picker --help\n  browser-picker --version\n\nOptions:\n  -h, --help       Show this help\n  -V, --version    Show version\n"
+msgstr ""
