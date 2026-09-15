@@ -1,0 +1,3 @@
+# Use Rust, GTK, and GApplication
+
+Browser Picker will be one Rust binary using GTK4/libadwaita and GApplication on the user session D-Bus. This stack was chosen over Qt, Slint, and custom IPC because the Picker requires mature AT-SPI accessibility, keyboard interaction, desktop activation, and single-instance request forwarding; the accepted trade-off is GNOME-oriented styling on KDE and a requirement for session D-Bus whenever interactive UI or queue coordination is needed. Without D-Bus, the binary may perform one-shot automatic routing only; without a graphical display, it is limited to non-routing commands such as configuration validation.

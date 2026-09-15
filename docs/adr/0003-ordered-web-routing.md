@@ -1,0 +1,3 @@
+# Use ordered web routing and explicit file choices
+
+Web Routing Rules will be evaluated from top to bottom and the first enabled match will decide, using fixed-form OR-of-AND expressions with optional leaf negation over a stable Matching URL. Explicit order was chosen over computed specificity because precedence must remain visible and user-controlled, while fixed-form expressions keep the GUI and TOML comprehensible; local files deliberately bypass both rules and the Fallback Action and always require a Picker choice because automatic path-based routing would expand the privacy and safety surface beyond the initial need.
