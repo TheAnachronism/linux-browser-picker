@@ -343,6 +343,45 @@
                                       unset BROWSER_PICKER_TEST_OUTPUT
                                     }
 
+                                    run_activation_with_preselection_and_automatic() {
+                                      export BROWSER_PICKER_TEST_OUTPUT="$TMPDIR/mixed-activation-argv"
+                                      rm -f "$BROWSER_PICKER_TEST_OUTPUT"
+                                      suggested="https://suggested.example/queued"
+                                      automatic="https://automatic.example/immediate"
+                                      ${browser-picker}/bin/browser-picker "$suggested" "$automatic" &
+                                      launcher=$!
+                                      window=
+                                      for attempt in $(seq 1 100); do
+                                        set -- $(xdotool search --onlyvisible --name "^Browser Picker$" 2>/dev/null || true)
+                                        if [ "$#" -gt 0 ]; then
+                                          window=$1
+                                          break
+                                        fi
+                                        sleep 0.1
+                                      done
+                                      test -n "$window"
+                                      for attempt in $(seq 1 100); do
+                                        test -f "$BROWSER_PICKER_TEST_OUTPUT" && break
+                                        sleep 0.1
+                                      done
+                                      test "$(cat "$BROWSER_PICKER_TEST_OUTPUT")" = "--normal
+                $automatic"
+                                      kill -0 "$launcher"
+                                      xdotool windowfocus --sync "$window"
+                                      xdotool key Return
+                                      for attempt in $(seq 1 100); do
+                                        actual_lines=$(wc -l < "$BROWSER_PICKER_TEST_OUTPUT" 2>/dev/null || printf 0)
+                                        test "$actual_lines" -lt 4 || break
+                                        sleep 0.1
+                                      done
+                                      test "$(cat "$BROWSER_PICKER_TEST_OUTPUT")" = "--normal
+                $automatic
+                --private
+                $suggested"
+                                      wait "$launcher"
+                                      unset BROWSER_PICKER_TEST_OUTPUT
+                                    }
+
                                     run_queue_and_assert_fifo() {
                                       export BROWSER_PICKER_TEST_OUTPUT="$TMPDIR/queue-argv"
                                       rm -f "$BROWSER_PICKER_TEST_OUTPUT"
@@ -476,6 +515,7 @@
                                     run_and_assert_window gtk-launch io.github.TheAnachronism.BrowserPicker
                                     run_picker_and_assert_launch
                                     run_routing_actions
+                                    run_activation_with_preselection_and_automatic
                                     run_queue_and_assert_fifo
                                     run_queue_limit_and_escape
                                     run_activation_limit
