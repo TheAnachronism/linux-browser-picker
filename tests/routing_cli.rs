@@ -473,3 +473,103 @@ fn manual_private_arguments_require_one_exact_target_element() {
         "Manual destination 'controlled' private arguments must contain exactly one '{target}' argument\n"
     );
 }
+
+fn install_discovered_browser(config_home: &TempDir) -> (std::path::PathBuf, String) {
+    let executable = install_fake_browser(config_home);
+    let data_home = config_home.path().join("xdg-data");
+    let applications = data_home.join("applications");
+    fs::create_dir_all(&applications).expect("application registry should be writable");
+    fs::write(
+        applications.join("synthetic-firefox.desktop"),
+        format!(
+            "[Desktop Entry]\nType=Application\nName=Synthetic Firefox\nExec={} %u\nMimeType=x-scheme-handler/http;x-scheme-handler/https;\nTerminal=false\n",
+            executable.display()
+        ),
+    )
+    .expect("desktop file should be writable");
+    fs::write(
+        applications.join("http-only.desktop"),
+        format!(
+            "[Desktop Entry]\nType=Application\nName=HTTP Only Browser\nExec={} %u\nMimeType=x-scheme-handler/http;\nTerminal=false\n",
+            executable.display()
+        ),
+    )
+    .expect("partial handler should be writable");
+    fs::write(
+        applications.join("mimeinfo.cache"),
+        "[MIME Cache]\nx-scheme-handler/http=synthetic-firefox.desktop;http-only.desktop;\nx-scheme-handler/https=synthetic-firefox.desktop;\n",
+    )
+    .expect("MIME cache should be writable");
+    (data_home, "synthetic-firefox.desktop".to_owned())
+}
+
+#[test]
+fn discovered_destination_launches_through_gappinfo() {
+    let config_home = TempDir::new().expect("temporary configuration home should be created");
+    let (data_home, desktop_id) = install_discovered_browser(&config_home);
+    write_raw_config(
+        &config_home,
+        &format!(
+            "version = 1\n\n[[destinations]]\nid = \"firefox\"\nlabel = \"Synthetic Firefox\"\n\n[destinations.application]\ntype = \"discovered\"\ndesktop_id = \"{desktop_id}\"\n\n[fallback]\naction = \"open\"\ndestination = \"firefox\"\n"
+        ),
+    );
+    let received = config_home.path().join("received-argv");
+    let target = "https://user:secret@example.com/discovered";
+
+    let output = browser_picker(&config_home)
+        .env("XDG_DATA_HOME", &data_home)
+        .env("XDG_DATA_DIRS", &data_home)
+        .env("BROWSER_PICKER_TEST_OUTPUT", &received)
+        .arg(target)
+        .output()
+        .expect("Browser Picker should start");
+
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stdout.is_empty());
+    assert!(output.stderr.is_empty());
+    assert_eq!(wait_for_file(&received), format!("{target}\n"));
+}
+
+#[test]
+fn discovered_destination_requires_a_desktop_id() {
+    let config_home = TempDir::new().expect("temporary configuration home should be created");
+    write_raw_config(
+        &config_home,
+        "version = 1\n\n[[destinations]]\nid = \"firefox\"\nlabel = \"Synthetic Firefox\"\n\n[destinations.application]\ntype = \"discovered\"\ndesktop_id = \"\"\n\n[fallback]\naction = \"open\"\ndestination = \"firefox\"\n",
+    );
+
+    let output = browser_picker(&config_home)
+        .arg("https://example.com/")
+        .output()
+        .expect("Browser Picker should start");
+
+    assert_eq!(output.status.code(), Some(3));
+    assert_eq!(
+        String::from_utf8(output.stderr).expect("error output should be UTF-8"),
+        "Discovered destination 'firefox' must have a desktop application ID\n"
+    );
+}
+
+#[test]
+fn discovered_destination_rejects_parsed_command_fields() {
+    let config_home = TempDir::new().expect("temporary configuration home should be created");
+    write_raw_config(
+        &config_home,
+        "version = 1\n\n[[destinations]]\nid = \"firefox\"\nlabel = \"Synthetic Firefox\"\n\n[destinations.application]\ntype = \"discovered\"\ndesktop_id = \"synthetic-firefox.desktop\"\nexec = \"/bin/true {target}\"\n\n[fallback]\naction = \"show-picker\"\n",
+    );
+
+    let output = browser_picker(&config_home)
+        .arg("https://example.com/")
+        .output()
+        .expect("Browser Picker should start");
+
+    assert_eq!(output.status.code(), Some(3));
+    assert_eq!(
+        String::from_utf8(output.stderr).expect("error output should be UTF-8"),
+        "Configuration is not valid versioned TOML\n"
+    );
+}

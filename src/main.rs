@@ -1,9 +1,11 @@
 mod application;
 mod configuration;
+mod discovery;
 mod i18n;
 mod launcher;
 mod open_target;
 mod routing;
+mod setup;
 
 use std::env;
 
@@ -43,6 +45,7 @@ fn main() -> gtk::glib::ExitCode {
                 target,
                 destinations,
             }) => application::run_picker(target, destinations),
+            Ok(routing::Outcome::Setup { target }) => application::run_setup(target),
             Err(error) => {
                 let (message, status) = routing_error_message(error);
                 eprintln!("{message}");
@@ -83,60 +86,7 @@ fn target_error_message(error: open_target::Error) -> String {
 }
 
 fn configuration_error_message(error: configuration::Error) -> String {
-    match error {
-        configuration::Error::ConfigHomeNotAbsolute => {
-            i18n::text("XDG_CONFIG_HOME must be an absolute path")
-        }
-        configuration::Error::HomeNotSet => i18n::text("HOME is not set"),
-        configuration::Error::Read(std::io::ErrorKind::NotFound) => {
-            i18n::text("Browser Picker configuration was not found")
-        }
-        configuration::Error::Read(std::io::ErrorKind::PermissionDenied) => {
-            i18n::text("Browser Picker configuration permission was denied")
-        }
-        configuration::Error::Read(_) => {
-            i18n::text("Browser Picker configuration could not be read")
-        }
-        configuration::Error::InvalidToml => {
-            i18n::text("Configuration is not valid versioned TOML")
-        }
-        configuration::Error::UnsupportedVersion(version) => i18n::text_with(
-            "Unsupported configuration version {version}; expected version 1",
-            &[("{version}", &version.to_string())],
-        ),
-        configuration::Error::InvalidId(id) => i18n::text_with(
-            "Browser Destination ID '{id}' must be a lowercase slug",
-            &[("{id}", &id)],
-        ),
-        configuration::Error::DuplicateId(id) => i18n::text_with(
-            "Browser Destination ID '{id}' is not unique",
-            &[("{id}", &id)],
-        ),
-        configuration::Error::InvalidLabel(id) => i18n::text_with(
-            "Browser Destination '{id}' must have a non-empty display label",
-            &[("{id}", &id)],
-        ),
-        configuration::Error::DuplicateLabel(label) => i18n::text_with(
-            "Browser Destination display label '{label}' is not unique",
-            &[("{label}", &label)],
-        ),
-        configuration::Error::UnknownFallback(id) => i18n::text_with(
-            "Fallback references unknown destination '{id}'",
-            &[("{id}", &id)],
-        ),
-        configuration::Error::InvalidExecutable(id) => i18n::text_with(
-            "Manual destination '{id}' executable must be an absolute path or a PATH-resolved name",
-            &[("{id}", &id)],
-        ),
-        configuration::Error::InvalidTargetTemplate(id) => i18n::text_with(
-            "Manual destination '{id}' must contain exactly one '{placeholder}' argument",
-            &[("{id}", &id), ("{placeholder}", "{target}")],
-        ),
-        configuration::Error::InvalidPrivateTargetTemplate(id) => i18n::text_with(
-            "Manual destination '{id}' private arguments must contain exactly one '{placeholder}' argument",
-            &[("{id}", &id), ("{placeholder}", "{target}")],
-        ),
-    }
+    error.message()
 }
 
 fn launch_error_message(error: launcher::Error) -> String {

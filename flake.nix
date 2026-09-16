@@ -116,17 +116,40 @@
                 export LANG=C.UTF-8
                 export LC_ALL=C.UTF-8
                 export XDG_RUNTIME_DIR="$TMPDIR/runtime"
+                export XDG_DATA_HOME="$TMPDIR/xdg-data"
                 export XDG_DATA_DIRS="${browser-picker}/share''${XDG_DATA_DIRS:+:$XDG_DATA_DIRS}"
-                mkdir -p "$HOME" "$XDG_RUNTIME_DIR"
+                mkdir -p "$HOME" "$XDG_RUNTIME_DIR" "$XDG_DATA_HOME/applications"
                 chmod 700 "$XDG_RUNTIME_DIR"
+
+                cat > "$TMPDIR/controlled-browser" <<'EOF'
+#!/bin/sh
+printf '%s\n' "$@" > "''${BROWSER_PICKER_TEST_OUTPUT:-$TMPDIR/received-argv}"
+EOF
+                chmod 700 "$TMPDIR/controlled-browser"
+                cat > "$XDG_DATA_HOME/applications/aaa-controlled.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=AAA Controlled Browser
+Exec=$TMPDIR/controlled-browser %u
+MimeType=x-scheme-handler/http;x-scheme-handler/https;
+Terminal=false
+EOF
+                cat > "$XDG_DATA_HOME/applications/http-only.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=HTTP Only Browser
+Exec=$TMPDIR/controlled-browser %u
+MimeType=x-scheme-handler/http;
+Terminal=false
+EOF
+                cat > "$XDG_DATA_HOME/applications/mimeinfo.cache" <<'EOF'
+[MIME Cache]
+x-scheme-handler/http=aaa-controlled.desktop;http-only.desktop;
+x-scheme-handler/https=aaa-controlled.desktop;
+EOF
 
                 export XDG_CONFIG_HOME="$TMPDIR/config"
                 mkdir -p "$XDG_CONFIG_HOME/browser-picker"
-                cat > "$TMPDIR/controlled-browser" <<'EOF'
-#!/bin/sh
-printf '%s\n' "$@" > "$TMPDIR/received-argv"
-EOF
-                chmod 700 "$TMPDIR/controlled-browser"
                 cat > "$XDG_CONFIG_HOME/browser-picker/config.toml" <<EOF
 version = 1
 
@@ -204,6 +227,58 @@ EOF
                       trap - EXIT
                     }
 
+                    run_first_run_and_picker() {
+                      export XDG_CONFIG_HOME="$TMPDIR/first-run-config"
+                      mkdir -p "$XDG_CONFIG_HOME"
+                      export BROWSER_PICKER_TEST_OUTPUT="$TMPDIR/first-run-argv"
+                      target="https://example.com/first-run?token=kept-private"
+                      ${browser-picker}/bin/browser-picker "$target" &
+                      launcher=$!
+                      window=
+                      for attempt in $(seq 1 100); do
+                        set -- $(xdotool search --onlyvisible --name "^Browser Picker$" 2>/dev/null || true)
+                        if [ "$#" -gt 0 ]; then
+                          window=$1
+                          break
+                        fi
+                        sleep 0.1
+                      done
+                      test -n "$window"
+                      test ! -f "$XDG_CONFIG_HOME/browser-picker/config.toml"
+                      sleep 0.3
+                      xdotool windowfocus --sync "$window"
+                      xdotool key --clearmodifiers space
+                      sleep 0.2
+                      xdotool key --clearmodifiers alt+s
+                      for attempt in $(seq 1 100); do
+                        test ! -f "$XDG_CONFIG_HOME/browser-picker/config.toml" || break
+                        sleep 0.1
+                      done
+                      grep -q "type = \"discovered\"" "$XDG_CONFIG_HOME/browser-picker/config.toml"
+                      grep -q "aaa-controlled.desktop" "$XDG_CONFIG_HOME/browser-picker/config.toml"
+                      test ! -f "$TMPDIR/first-run-argv"
+                      window=
+                      for attempt in $(seq 1 100); do
+                        set -- $(xdotool search --onlyvisible --name "^Browser Picker$" 2>/dev/null || true)
+                        if [ "$#" -gt 0 ]; then
+                          window=$1
+                          break
+                        fi
+                        sleep 0.1
+                      done
+                      test -n "$window"
+                      xdotool windowfocus --sync "$window"
+                      xdotool key alt+1
+                      for attempt in $(seq 1 100); do
+                        test ! -f "$TMPDIR/first-run-argv" || break
+                        sleep 0.1
+                      done
+                      test "$(cat "$TMPDIR/first-run-argv")" = "$target"
+                      wait "$launcher"
+                      unset BROWSER_PICKER_TEST_OUTPUT
+                      export XDG_CONFIG_HOME="$TMPDIR/config"
+                    }
+
                     run_picker_and_assert_launch() {
                       target="https://xn--bcher-kva.example/path?token=kept-private"
                       ${browser-picker}/bin/browser-picker "$target" &
@@ -240,6 +315,7 @@ $target"
                       wait "$launcher"
                     }
 
+                    run_first_run_and_picker
                     run_and_assert_window ${browser-picker}/bin/browser-picker
                     run_and_assert_window gtk-launch io.github.TheAnachronism.BrowserPicker
                     run_picker_and_assert_launch

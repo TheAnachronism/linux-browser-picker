@@ -17,6 +17,9 @@ pub enum Outcome {
         target: WebTarget,
         destinations: Vec<BrowserDestination>,
     },
+    Setup {
+        target: WebTarget,
+    },
 }
 
 pub fn route(argument: &OsStr) -> Result<Outcome, Error> {
@@ -25,7 +28,9 @@ pub fn route(argument: &OsStr) -> Result<Outcome, Error> {
     }
 
     let target = WebTarget::parse(argument).map_err(Error::InvalidTarget)?;
-    let configuration = configuration::load().map_err(Error::Configuration)?;
+    let Some(configuration) = configuration::load_optional().map_err(Error::Configuration)? else {
+        return Ok(Outcome::Setup { target });
+    };
     match configuration.fallback {
         FallbackAction::Open(destination_id) => {
             let destination = configuration

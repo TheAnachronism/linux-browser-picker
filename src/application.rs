@@ -7,17 +7,18 @@ use gtk::gdk;
 use gtk::gio;
 use gtk::glib;
 
-use crate::configuration::BrowserDestination;
+use crate::configuration::{self, BrowserDestination, DestinationLaunch};
 use crate::i18n;
 use crate::launcher;
 use crate::open_target::WebTarget;
+use crate::setup;
 
 pub const ID: &str = "io.github.TheAnachronism.BrowserPicker";
 
 #[derive(Clone)]
-struct PickerSession {
-    pending: Rc<RefCell<VecDeque<WebTarget>>>,
-    destinations: Rc<Vec<BrowserDestination>>,
+pub(crate) struct PickerSession {
+    pub pending: Rc<RefCell<VecDeque<WebTarget>>>,
+    pub destinations: Rc<Vec<BrowserDestination>>,
 }
 
 struct PickerSurface<'a> {
@@ -34,8 +35,44 @@ struct PickerSurface<'a> {
 
 pub fn run() -> glib::ExitCode {
     let application = adw::Application::builder().application_id(ID).build();
-    application.connect_activate(show_configuration);
+    application.connect_activate(|application| {
+        if let Some(window) = application.active_window() {
+            window.present();
+            return;
+        }
+        match configuration::load_optional() {
+            Ok(existing) => setup::present(
+                application,
+                Rc::new(RefCell::new(VecDeque::new())),
+                existing,
+            ),
+            Err(_) => show_configuration_window(application),
+        }
+    });
     application.run()
+}
+
+pub fn run_setup(target: WebTarget) -> glib::ExitCode {
+    let application = adw::Application::builder()
+        .application_id(ID)
+        .flags(gio::ApplicationFlags::HANDLES_COMMAND_LINE)
+        .build();
+    let url = target.as_str().to_owned();
+    let pending = Rc::new(RefCell::new(VecDeque::new()));
+    application.connect_command_line(move |application, command_line| {
+        for argument in command_line.arguments().iter().skip(1) {
+            if let Ok(open_target) = WebTarget::parse(argument) {
+                pending.borrow_mut().push_back(open_target);
+            }
+        }
+        if application.active_window().is_none() {
+            setup::present(application, Rc::clone(&pending), None);
+        } else if let Some(window) = application.active_window() {
+            window.present();
+        }
+        glib::ExitCode::SUCCESS
+    });
+    application.run_with_args(&["browser-picker", &url])
 }
 
 pub fn run_picker(target: WebTarget, destinations: Vec<BrowserDestination>) -> glib::ExitCode {
@@ -64,14 +101,6 @@ pub fn run_picker(target: WebTarget, destinations: Vec<BrowserDestination>) -> g
     application.run_with_args(&["browser-picker", &url])
 }
 
-fn show_configuration(application: &adw::Application) {
-    if let Some(window) = application.active_window() {
-        window.present();
-        return;
-    }
-    show_configuration_window(application);
-}
-
 fn show_configuration_window(application: &adw::Application) {
     let page = adw::StatusPage::builder()
         .title(i18n::text("Browser Picker"))
@@ -93,7 +122,7 @@ fn show_configuration_window(application: &adw::Application) {
     window.present();
 }
 
-fn show_picker(application: &adw::Application, session: PickerSession) {
+pub(crate) fn show_picker(application: &adw::Application, session: PickerSession) {
     let destinations = Rc::clone(&session.destinations);
     let pending = Rc::clone(&session.pending);
     let current = pending
@@ -172,36 +201,75 @@ fn show_picker(application: &adw::Application, session: PickerSession) {
     let mut rows = Vec::with_capacity(destinations.len());
     for (index, destination) in destinations.iter().enumerate() {
         let labels = destination_search_text(destination);
+        let description_text = match &destination.unavailable_reason {
+            Some(reason) => format!("{labels}\n{reason}"),
+            None => labels.clone(),
+        };
         let row_content = gtk::Box::new(gtk::Orientation::Vertical, 3);
-        row_content.set_margin_top(9);
-        row_content.set_margin_bottom(9);
-        row_content.set_margin_start(12);
-        row_content.set_margin_end(12);
         let title = gtk::Label::builder()
             .label(&destination.label)
             .xalign(0.0)
             .build();
         title.add_css_class("heading");
         row_content.append(&title);
-        let description = gtk::Label::builder().label(&labels).xalign(0.0).build();
+        let description = gtk::Label::builder()
+            .label(&description_text)
+            .xalign(0.0)
+            .wrap(true)
+            .build();
         description.add_css_class("dim-label");
         row_content.append(&description);
+        row_content.set_hexpand(true);
+
+        let row_box = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+        row_box.set_margin_top(9);
+        row_box.set_margin_bottom(9);
+        row_box.set_margin_start(12);
+        row_box.set_margin_end(12);
+        row_box.append(&destination_icon(destination));
+        row_box.append(&row_content);
+        if destination.unavailable_reason.is_some() {
+            let repair = gtk::Button::with_label(&i18n::text("Repair"));
+            repair.update_property(&[
+                gtk::accessible::Property::Label("Repair Browser Destination"),
+                gtk::accessible::Property::Description(
+                    destination
+                        .unavailable_reason
+                        .as_deref()
+                        .unwrap_or_default(),
+                ),
+            ]);
+            repair.connect_clicked(glib::clone!(
+                #[weak]
+                application,
+                move |_| {
+                    let existing = configuration::load_optional().ok().flatten();
+                    setup::present(
+                        &application,
+                        Rc::new(RefCell::new(VecDeque::new())),
+                        existing,
+                    );
+                }
+            ));
+            row_box.append(&repair);
+        }
+
         let row = gtk::ListBoxRow::builder()
-            .child(&row_content)
-            .activatable(true)
+            .child(&row_box)
+            .activatable(destination.is_available())
             .selectable(true)
             .build();
         if index < 9 {
             let shortcut = format!("<Alt>{}", index + 1);
             row.update_property(&[
                 gtk::accessible::Property::Label(&destination.label),
-                gtk::accessible::Property::Description(&labels),
+                gtk::accessible::Property::Description(&description_text),
                 gtk::accessible::Property::KeyShortcuts(&shortcut),
             ]);
         } else {
             row.update_property(&[
                 gtk::accessible::Property::Label(&destination.label),
-                gtk::accessible::Property::Description(&labels),
+                gtk::accessible::Property::Description(&description_text),
             ]);
         }
         list.append(&row);
@@ -337,7 +405,14 @@ fn show_picker(application: &adw::Application, session: PickerSession) {
     configure.connect_clicked(glib::clone!(
         #[weak]
         application,
-        move |_| show_configuration_window(&application)
+        move |_| {
+            let existing = configuration::load_optional().ok().flatten();
+            setup::present(
+                &application,
+                Rc::new(RefCell::new(VecDeque::new())),
+                existing,
+            );
+        }
     ));
 
     search.connect_activate(glib::clone!(
@@ -394,7 +469,7 @@ fn show_picker(application: &adw::Application, session: PickerSession) {
             let supported = list
                 .selected_row()
                 .and_then(|row| destinations.get(row.index() as usize))
-                .is_some_and(|destination| destination.private_arguments.is_some());
+                .is_some_and(BrowserDestination::supports_private);
             if supported {
                 private_mode.set_sensitive(true);
                 private_mode.set_active(!private_mode.is_active());
@@ -557,7 +632,7 @@ fn update_private_mode(
     let supported = list
         .selected_row()
         .and_then(|row| destinations.get(row.index() as usize))
-        .is_some_and(|destination| destination.private_arguments.is_some());
+        .is_some_and(BrowserDestination::supports_private);
     private_mode.set_sensitive(supported);
     let description = if supported {
         i18n::text("Open using the destination's private mode")
@@ -618,6 +693,15 @@ fn launch_destination(
     let Some(target) = pending.borrow().front().cloned() else {
         return;
     };
+    if let Some(reason) = &destination.unavailable_reason {
+        surface.error.set_label(&i18n::text_with(
+            "Browser Destination '{label}' is unavailable: {reason}. Use Repair to configure another destination.",
+            &[("{label}", &destination.label), ("{reason}", reason)],
+        ));
+        surface.error.set_visible(true);
+        surface.error.grab_focus();
+        return;
+    }
     match launcher::dispatch(destination, &target, private) {
         Ok(()) => {
             pending.borrow_mut().pop_front();
@@ -651,4 +735,22 @@ fn launch_destination(
             surface.error.grab_focus();
         }
     }
+}
+
+fn destination_icon(destination: &BrowserDestination) -> gtk::Image {
+    let image = if let Some(name) = destination
+        .icon_name
+        .as_deref()
+        .filter(|name| !name.is_empty())
+    {
+        gtk::Image::from_icon_name(name)
+    } else if let DestinationLaunch::Discovered { desktop_id } = &destination.launch {
+        crate::discovery::icon(desktop_id)
+            .map(|icon| gtk::Image::from_gicon(&icon))
+            .unwrap_or_else(|| gtk::Image::from_icon_name("web-browser"))
+    } else {
+        gtk::Image::from_icon_name("web-browser")
+    };
+    image.set_pixel_size(32);
+    image
 }

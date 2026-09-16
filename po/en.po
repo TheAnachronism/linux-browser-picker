@@ -187,3 +187,61 @@ msgid ""
 msgstr ""
 "Manual destination '{id}' private arguments must contain exactly one "
 "'{placeholder}' argument"
+
+msgid "Browser Picker configuration could not be saved"
+msgstr "Browser Picker configuration could not be saved"
+
+msgid "Discovered destination '{id}' must have a desktop application ID"
+msgstr "Discovered destination '{id}' must have a desktop application ID"
+
+msgid "Choose Browser Destinations"
+msgstr "Choose Browser Destinations"
+
+msgid "An Open Target is waiting. After setup it will open in the Picker."
+msgstr "An Open Target is waiting. After setup it will open in the Picker."
+
+msgid "Enable Browser Candidate {name}"
+msgstr "Enable Browser Candidate {name}"
+
+msgid "Browser Destination ID"
+msgstr "Browser Destination ID"
+
+msgid "Browser Destination display label"
+msgstr "Browser Destination display label"
+
+msgid "Icon override"
+msgstr "Icon override"
+
+msgid "_Partial handlers"
+msgstr "_Partial handlers"
+
+msgid "Partial handler {name} advertises {schemes} only"
+msgstr "Partial handler {name} advertises {schemes} only"
+
+msgid "Fallback Action"
+msgstr "Fallback Action"
+
+msgid "Show Picker"
+msgstr "Show Picker"
+
+msgid "Open {label}"
+msgstr "Open {label}"
+
+msgid "_Save destinations"
+msgstr "_Save destinations"
+
+msgid "Cannot remove a destination referenced by the Fallback Action"
+msgstr "Cannot remove a destination referenced by the Fallback Action"
+
+msgid "Browser Application is not installed"
+msgstr "Browser Application is not installed"
+
+msgid "Repair"
+msgstr "Repair"
+
+msgid ""
+"Browser Destination '{label}' is unavailable: {reason}. Use Repair to "
+"configure another destination."
+msgstr ""
+"Browser Destination '{label}' is unavailable: {reason}. Use Repair to "
+"configure another destination."
