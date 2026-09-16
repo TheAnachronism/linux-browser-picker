@@ -229,3 +229,132 @@ msgstr ""
 
 msgid "{count} Pending Requests"
 msgstr ""
+
+msgid "Routing Rule ID '{id}' must be a lowercase slug"
+msgstr ""
+
+msgid "Routing Rule ID '{id}' is not unique"
+msgstr ""
+
+msgid "Routing Rule '{id}' must have a non-empty unique name"
+msgstr ""
+
+msgid "Routing Rule name '{name}' is not unique"
+msgstr ""
+
+msgid "Routing Rule '{id}' scheme must be HTTP or HTTPS"
+msgstr ""
+
+msgid "Routing Rule '{id}' host must be a valid domain or IP address"
+msgstr ""
+
+msgid "Routing Rule '{id}' must contain at least one condition group"
+msgstr ""
+
+msgid "Routing Rule '{id}' condition groups must not be empty"
+msgstr ""
+
+msgid "Routing action references unknown destination '{id}'"
+msgstr ""
+
+msgid "Browser Destination '{id}' does not support private Launch Mode"
+msgstr ""
+
+msgid "Saved configuration could not be reloaded"
+msgstr ""
+
+msgid "Edit Routing Rules for This URL"
+msgstr ""
+
+msgid "Routing Rules"
+msgstr ""
+
+msgid ""
+"Enabled rules run from top to bottom. Groups are OR alternatives; every "
+"condition in a group must match. Matching uses the normalized Matching URL "
+"shown by Test Rules."
+msgstr ""
+
+msgid "Add Routing Rule"
+msgstr ""
+
+msgid "Test Rules"
+msgstr ""
+
+msgid "Open an URL to test Routing Rules."
+msgstr ""
+
+msgid "Matching URL: {url}"
+msgstr ""
+
+msgid "Enabled"
+msgstr ""
+
+msgid "Add OR group"
+msgstr ""
+
+msgid "All conditions below must match (AND)"
+msgstr ""
+
+msgid "Add AND condition"
+msgstr ""
+
+msgid "Include subdomains"
+msgstr ""
+
+msgid "Ignore case"
+msgstr ""
+
+msgid "Not"
+msgstr ""
+
+msgid "_Save and Apply"
+msgstr ""
+
+msgid "_Save configuration"
+msgstr ""
+
+msgid "Open automatically"
+msgstr ""
+
+msgid "Preselect in Picker"
+msgstr ""
+
+msgid "Normal"
+msgstr ""
+
+msgid "Private"
+msgstr ""
+
+msgid "Scheme"
+msgstr ""
+
+msgid "Host"
+msgstr ""
+
+msgid "Port"
+msgstr ""
+
+msgid "Exact path"
+msgstr ""
+
+msgid "Path prefix"
+msgstr ""
+
+msgid "Query key"
+msgstr ""
+
+msgid "Query value"
+msgstr ""
+
+msgid "Routing Rule ID"
+msgstr ""
+
+msgid "Routing Rule name"
+msgstr ""
+
+msgid "URL Condition query key"
+msgstr ""
+
+msgid "URL Condition value"
+msgstr ""

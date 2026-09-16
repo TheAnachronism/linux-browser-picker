@@ -9,10 +9,12 @@ use gtk::glib;
 
 use crate::application::{self, PickerSession};
 use crate::configuration::{
-    self, BrowserDestination, Configuration, DestinationLaunch, FallbackAction,
+    self, BrowserDestination, Configuration, DestinationLaunch, FallbackAction, RoutingRule,
 };
 use crate::discovery::{self, BrowserCandidate};
 use crate::i18n;
+use crate::routing;
+use crate::routing_editor::{self, RoutingRuleEditor};
 
 #[derive(Clone)]
 struct EditorItem {
@@ -43,6 +45,23 @@ pub fn present(
 
     let discovery = discovery::discover();
     let items = Rc::new(RefCell::new(editor_items(&existing, &discovery.ordinary)));
+    let current_target = session
+        .pending
+        .borrow()
+        .front()
+        .map(|request| request.target.clone());
+    let initial_destination = existing
+        .as_ref()
+        .and_then(|configuration| configuration.destinations.first())
+        .map(|destination| destination.id.as_str());
+    let rule_editor = Rc::new(RoutingRuleEditor::new(
+        existing
+            .as_ref()
+            .map(|configuration| configuration.rules.as_slice())
+            .unwrap_or_default(),
+        current_target.as_ref(),
+        initial_destination,
+    ));
     let first_run = existing.is_none();
 
     let content = gtk::Box::new(gtk::Orientation::Vertical, 12);
@@ -68,7 +87,7 @@ pub fn present(
             .build();
         content.append(&waiting);
         let host = gtk::Label::builder()
-            .label(target.unicode_host())
+            .label(target.target.unicode_host())
             .xalign(0.0)
             .selectable(true)
             .build();
@@ -98,12 +117,19 @@ pub fn present(
 
     let order = gtk::Box::new(gtk::Orientation::Horizontal, 9);
     let move_up = gtk::Button::from_icon_name("go-up-symbolic");
-    move_up.update_property(&[gtk::accessible::Property::Label("Move destination up")]);
+    move_up.update_property(&[
+        gtk::accessible::Property::Label("Move destination up"),
+        gtk::accessible::Property::KeyShortcuts("<Alt><Shift>Up"),
+    ]);
     let move_down = gtk::Button::from_icon_name("go-down-symbolic");
-    move_down.update_property(&[gtk::accessible::Property::Label("Move destination down")]);
+    move_down.update_property(&[
+        gtk::accessible::Property::Label("Move destination down"),
+        gtk::accessible::Property::KeyShortcuts("<Alt><Shift>Down"),
+    ]);
     order.append(&move_up);
     order.append(&move_down);
     content.append(&order);
+    content.append(&rule_editor.root);
 
     if !discovery.partial.is_empty() {
         let expander = gtk::Expander::with_mnemonic(&i18n::text("_Partial handlers"));
@@ -144,16 +170,19 @@ pub fn present(
         .visible(false)
         .build();
     error.add_css_class("error");
-    error.set_focusable(true);
     error.update_property(&[gtk::accessible::Property::Description(
-        "Destination configuration error",
+        "Browser Picker configuration error",
     )]);
     content.append(&error);
-
-    let save = gtk::Button::with_mnemonic(&i18n::text("_Save destinations"));
+    let save_label = if current_target.is_some() {
+        i18n::text("_Save and Apply")
+    } else {
+        i18n::text("_Save configuration")
+    };
+    let save = gtk::Button::with_mnemonic(&save_label);
     save.add_css_class("suggested-action");
     save.update_property(&[
-        gtk::accessible::Property::Label("Save destinations"),
+        gtk::accessible::Property::Label(save_label.trim_start_matches('_')),
         gtk::accessible::Property::KeyShortcuts("<Alt>s"),
     ]);
     content.append(&save);
@@ -216,6 +245,36 @@ pub fn present(
             move |_| refresh_fallback()
         ));
     }
+    let explain = glib::clone!(
+        #[weak]
+        fallback,
+        #[strong]
+        items,
+        #[strong]
+        rule_editor,
+        #[strong]
+        current_target,
+        move || {
+            let Some(target) = current_target.as_ref() else {
+                return;
+            };
+            match collect_configuration(&items.borrow(), &rule_editor.rules(), &fallback) {
+                Ok(configuration) => {
+                    let evaluation = routing::evaluate(&configuration, target);
+                    rule_editor
+                        .explanation
+                        .set_label(&routing_editor::explanation_text(&evaluation));
+                }
+                Err(failure) => rule_editor.explanation.set_label(&failure.message()),
+            }
+        }
+    );
+    explain();
+    rule_editor.test.connect_clicked(glib::clone!(
+        #[strong]
+        explain,
+        move |_| explain()
+    ));
 
     move_up.connect_clicked(glib::clone!(
         #[weak]
@@ -241,6 +300,36 @@ pub fn present(
             refresh_fallback();
         }
     ));
+    let move_destination_up = gio::SimpleAction::new("move-destination-up", None);
+    move_destination_up.connect_activate(glib::clone!(
+        #[weak]
+        list,
+        #[strong]
+        items,
+        #[strong]
+        refresh_fallback,
+        move |_, _| {
+            reorder(&list, &items, -1);
+            refresh_fallback();
+        }
+    ));
+    window.add_action(&move_destination_up);
+    application.set_accels_for_action("win.move-destination-up", &["<Alt><Shift>Up"]);
+    let move_destination_down = gio::SimpleAction::new("move-destination-down", None);
+    move_destination_down.connect_activate(glib::clone!(
+        #[weak]
+        list,
+        #[strong]
+        items,
+        #[strong]
+        refresh_fallback,
+        move |_, _| {
+            reorder(&list, &items, 1);
+            refresh_fallback();
+        }
+    ));
+    window.add_action(&move_destination_down);
+    application.set_accels_for_action("win.move-destination-down", &["<Alt><Shift>Down"]);
 
     save.connect_clicked(glib::clone!(
         #[weak]
@@ -254,9 +343,19 @@ pub fn present(
         #[strong]
         items,
         #[strong]
+        rule_editor,
+        #[strong]
         session,
         move |_| {
-            save_destinations(&application, &window, &fallback, &error, &items, &session);
+            save_destinations(
+                &application,
+                &window,
+                &fallback,
+                &error,
+                &items,
+                &rule_editor.rules(),
+                &session,
+            );
         }
     ));
     let save_action = gio::SimpleAction::new("save-destinations", None);
@@ -272,9 +371,19 @@ pub fn present(
         #[strong]
         items,
         #[strong]
+        rule_editor,
+        #[strong]
         session,
         move |_, _| {
-            save_destinations(&application, &window, &fallback, &error, &items, &session);
+            save_destinations(
+                &application,
+                &window,
+                &fallback,
+                &error,
+                &items,
+                &rule_editor.rules(),
+                &session,
+            );
         }
     ));
     window.add_action(&save_action);
@@ -289,7 +398,9 @@ pub fn present(
     let fallback_weak = fallback.downgrade();
     let error_weak = error.downgrade();
     let key_items = Rc::clone(&items);
+    let key_rule_editor = Rc::clone(&rule_editor);
     let key_session = session.clone();
+    rule_editor.connect_order_shortcuts(&window);
     keys.connect_key_pressed(move |_, key, _, modifiers| {
         let (Some(application), Some(window), Some(fallback), Some(error)) = (
             application_weak.upgrade(),
@@ -309,6 +420,7 @@ pub fn present(
                 &fallback,
                 &error,
                 &key_items,
+                &key_rule_editor.rules(),
                 &key_session,
             );
             glib::Propagation::Stop
@@ -333,16 +445,21 @@ fn save_destinations(
     fallback: &gtk::DropDown,
     error: &gtk::Label,
     items: &Rc<RefCell<Vec<EditorItem>>>,
+    rules: &[RoutingRule],
     session: &PickerSession,
 ) {
-    match collect_configuration(&items.borrow(), fallback) {
+    match collect_configuration(&items.borrow(), rules, fallback) {
         Ok(configuration) => match configuration::save(&configuration) {
             Ok(()) => {
-                let saved = configuration::load().unwrap_or(configuration);
                 if session.pending.borrow().front().is_some() {
-                    *session.destinations.borrow_mut() = saved.destinations;
-                    application::show_picker(application, session.clone());
-                    window.close();
+                    match application::reapply_front(application, session) {
+                        Ok(()) => window.close(),
+                        Err((message, _)) => {
+                            error.set_label(&message);
+                            error.set_visible(true);
+                            error.grab_focus();
+                        }
+                    }
                 } else {
                     error.set_visible(false);
                     window.present();
@@ -596,6 +713,7 @@ fn reorder(list: &gtk::ListBox, items: &Rc<RefCell<Vec<EditorItem>>>, direction:
 
 fn collect_configuration(
     items: &[EditorItem],
+    rules: &[RoutingRule],
     fallback: &gtk::DropDown,
 ) -> Result<Configuration, configuration::Error> {
     let mut destinations = Vec::new();
@@ -631,5 +749,5 @@ fn collect_configuration(
         };
         FallbackAction::Open(id.clone())
     };
-    configuration::assemble(destinations, fallback)
+    configuration::assemble(destinations, rules.to_vec(), fallback)
 }

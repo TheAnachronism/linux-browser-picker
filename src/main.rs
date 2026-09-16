@@ -5,6 +5,7 @@ mod i18n;
 mod launcher;
 mod open_target;
 mod routing;
+mod routing_editor;
 mod setup;
 
 use std::env;

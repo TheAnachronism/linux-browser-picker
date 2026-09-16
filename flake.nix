@@ -116,6 +116,38 @@
                 args = ["--normal", "{target}"]
                 private_args = ["--private", "{target}"]
 
+                [[rules]]
+                id = "automatic"
+                name = "Automatic"
+                enabled = true
+
+                [rules.action]
+                type = "open"
+                destination = "controlled"
+                mode = "normal"
+
+                [[rules.groups]]
+
+                [[rules.groups.conditions]]
+                type = "host"
+                value = "automatic.example"
+
+                [[rules]]
+                id = "suggested"
+                name = "Suggested"
+                enabled = true
+
+                [rules.action]
+                type = "preselect"
+                destination = "controlled"
+                mode = "private"
+
+                [[rules.groups]]
+
+                [[rules.groups.conditions]]
+                type = "host"
+                value = "suggested.example"
+
                 [fallback]
                 action = "show-picker"
                 EOF
@@ -256,6 +288,61 @@
                                       wait "$launcher"
                                     }
 
+                                    run_routing_actions() {
+                                      export BROWSER_PICKER_TEST_OUTPUT="$TMPDIR/routing-actions-argv"
+                                      rm -f "$BROWSER_PICKER_TEST_OUTPUT"
+                                      suggested="https://suggested.example/path"
+                                      ${browser-picker}/bin/browser-picker "$suggested" &
+                                      launcher=$!
+                                      window=
+                                      for attempt in $(seq 1 100); do
+                                        set -- $(xdotool search --onlyvisible --name "^Browser Picker$" 2>/dev/null || true)
+                                        if [ "$#" -gt 0 ]; then
+                                          window=$1
+                                          break
+                                        fi
+                                        sleep 0.1
+                                      done
+                                      test -n "$window"
+                                      xdotool windowfocus --sync "$window"
+                                      xdotool key Return
+                                      for attempt in $(seq 1 100); do
+                                        test -f "$BROWSER_PICKER_TEST_OUTPUT" && break
+                                        sleep 0.1
+                                      done
+                                      test "$(cat "$BROWSER_PICKER_TEST_OUTPUT")" = "--private
+                $suggested"
+                                      wait "$launcher"
+
+                                      rm -f "$BROWSER_PICKER_TEST_OUTPUT"
+                                      pending="https://pending.example/"
+                                      automatic="https://automatic.example/path"
+                                      ${browser-picker}/bin/browser-picker "$pending" &
+                                      launcher=$!
+                                      window=
+                                      for attempt in $(seq 1 100); do
+                                        set -- $(xdotool search --onlyvisible --name "^Browser Picker$" 2>/dev/null || true)
+                                        if [ "$#" -gt 0 ]; then
+                                          window=$1
+                                          break
+                                        fi
+                                        sleep 0.1
+                                      done
+                                      test -n "$window"
+                                      ${browser-picker}/bin/browser-picker "$automatic"
+                                      for attempt in $(seq 1 100); do
+                                        test -f "$BROWSER_PICKER_TEST_OUTPUT" && break
+                                        sleep 0.1
+                                      done
+                                      test "$(cat "$BROWSER_PICKER_TEST_OUTPUT")" = "--normal
+                $automatic"
+                                      kill -0 "$launcher"
+                                      xdotool windowfocus --sync "$window"
+                                      xdotool key --clearmodifiers ctrl+w
+                                      wait "$launcher"
+                                      unset BROWSER_PICKER_TEST_OUTPUT
+                                    }
+
                                     run_queue_and_assert_fifo() {
                                       export BROWSER_PICKER_TEST_OUTPUT="$TMPDIR/queue-argv"
                                       rm -f "$BROWSER_PICKER_TEST_OUTPUT"
@@ -388,6 +475,7 @@
                                     run_and_assert_window ${browser-picker}/bin/browser-picker
                                     run_and_assert_window gtk-launch io.github.TheAnachronism.BrowserPicker
                                     run_picker_and_assert_launch
+                                    run_routing_actions
                                     run_queue_and_assert_fifo
                                     run_queue_limit_and_escape
                                     run_activation_limit

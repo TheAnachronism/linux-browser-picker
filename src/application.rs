@@ -9,23 +9,30 @@ use gtk::gdk;
 use gtk::gio;
 use gtk::glib;
 
-use crate::configuration::{self, BrowserDestination, DestinationLaunch};
+use crate::configuration::{self, BrowserDestination, DestinationLaunch, LaunchMode};
 use crate::i18n;
 use crate::launcher;
 use crate::open_target::WebTarget;
-use crate::routing;
+use crate::routing::{self, Preselection};
 use crate::setup;
 
 pub const ID: &str = "io.github.TheAnachronism.BrowserPicker";
 const MAX_TARGETS_PER_ACTIVATION: usize = 100;
 const MAX_PENDING_REQUESTS: usize = 100;
 const STATUS_OVERFLOW: u8 = 6;
+#[derive(Clone, Debug)]
+pub(crate) struct PendingRequest {
+    pub target: WebTarget,
+    pub preselection: Option<Preselection>,
+}
+
 #[derive(Clone)]
 pub(crate) struct PickerSession {
-    pub pending: Rc<RefCell<VecDeque<WebTarget>>>,
+    pub pending: Rc<RefCell<VecDeque<PendingRequest>>>,
     pub destinations: Rc<RefCell<Vec<BrowserDestination>>>,
     remaining: Rc<RefCell<glib::WeakRef<gtk::Label>>>,
     picker_window: Rc<RefCell<glib::WeakRef<adw::ApplicationWindow>>>,
+    rebuilding: Rc<RefCell<bool>>,
 }
 
 impl PickerSession {
@@ -35,12 +42,25 @@ impl PickerSession {
             destinations: Rc::new(RefCell::new(Vec::new())),
             remaining: Rc::new(RefCell::new(glib::WeakRef::new())),
             picker_window: Rc::new(RefCell::new(glib::WeakRef::new())),
+            rebuilding: Rc::new(RefCell::new(false)),
         }
     }
 
     fn update_remaining(&self) {
         if let Some(label) = self.remaining.borrow().upgrade() {
             label.set_label(&pending_count_text(self.pending.borrow().len()));
+        }
+    }
+
+    fn rebuild_picker(&self, application: &adw::Application) {
+        *self.rebuilding.borrow_mut() = true;
+        if let Some(window) = self.picker_window.borrow().upgrade() {
+            window.close();
+        }
+        self.picker_window.borrow().set(None);
+        *self.rebuilding.borrow_mut() = false;
+        if !self.pending.borrow().is_empty() {
+            show_picker(application, self.clone());
         }
     }
 }
@@ -146,6 +166,7 @@ fn accept_target(session: &PickerSession, argument: &OsStr) -> Result<bool, (Str
         Ok(routing::Outcome::Pick {
             target,
             destinations,
+            preselection,
         }) => {
             if session.pending.borrow().len() == MAX_PENDING_REQUESTS {
                 return Err((
@@ -154,7 +175,10 @@ fn accept_target(session: &PickerSession, argument: &OsStr) -> Result<bool, (Str
                 ));
             }
             *session.destinations.borrow_mut() = destinations;
-            session.pending.borrow_mut().push_back(target);
+            session.pending.borrow_mut().push_back(PendingRequest {
+                target,
+                preselection,
+            });
             Ok(false)
         }
         Ok(routing::Outcome::Setup { target }) => {
@@ -164,7 +188,10 @@ fn accept_target(session: &PickerSession, argument: &OsStr) -> Result<bool, (Str
                     STATUS_OVERFLOW,
                 ));
             }
-            session.pending.borrow_mut().push_back(target);
+            session.pending.borrow_mut().push_back(PendingRequest {
+                target,
+                preselection: None,
+            });
             Ok(true)
         }
         Err(error) => Err(crate::routing_error_message(error)),
@@ -185,6 +212,48 @@ fn present_accepted(application: &adw::Application, session: &PickerSession, nee
             window.present();
         } else {
             show_picker(application, session.clone());
+        }
+    }
+}
+
+pub(crate) fn reapply_front(
+    application: &adw::Application,
+    session: &PickerSession,
+) -> Result<(), (String, u8)> {
+    let Some(request) = session.pending.borrow_mut().pop_front() else {
+        return Ok(());
+    };
+    match routing::route(OsStr::new(request.target.as_str())) {
+        Ok(routing::Outcome::Dispatched) => {
+            session.rebuild_picker(application);
+            Ok(())
+        }
+        Ok(routing::Outcome::Pick {
+            target,
+            destinations,
+            preselection,
+        }) => {
+            *session.destinations.borrow_mut() = destinations;
+            session.pending.borrow_mut().push_front(PendingRequest {
+                target,
+                preselection,
+            });
+            session.rebuild_picker(application);
+            Ok(())
+        }
+        Ok(routing::Outcome::Setup { target }) => {
+            session.pending.borrow_mut().push_front(PendingRequest {
+                target,
+                preselection: None,
+            });
+            Err((
+                i18n::text("Saved configuration could not be reloaded"),
+                crate::STATUS_CONFIGURATION,
+            ))
+        }
+        Err(failure) => {
+            session.pending.borrow_mut().push_front(request);
+            Err(crate::routing_error_message(failure))
         }
     }
 }
@@ -256,7 +325,7 @@ pub(crate) fn show_picker(application: &adw::Application, session: PickerSession
     content.set_margin_end(18);
 
     let host = gtk::Label::builder()
-        .label(current.unicode_host())
+        .label(current.target.unicode_host())
         .xalign(0.0)
         .selectable(true)
         .build();
@@ -265,7 +334,7 @@ pub(crate) fn show_picker(application: &adw::Application, session: PickerSession
     content.append(&host);
 
     let host_details = gtk::Label::builder()
-        .label(host_forms(&current))
+        .label(host_forms(&current.target))
         .xalign(0.0)
         .selectable(true)
         .build();
@@ -286,7 +355,7 @@ pub(crate) fn show_picker(application: &adw::Application, session: PickerSession
     )]);
     content.append(&reveal);
     let full_target = gtk::Label::builder()
-        .label(current.as_str())
+        .label(current.target.as_str())
         .xalign(0.0)
         .wrap(true)
         .selectable(true)
@@ -301,6 +370,21 @@ pub(crate) fn show_picker(application: &adw::Application, session: PickerSession
         full_target,
         move |button| full_target.set_visible(button.is_active())
     ));
+    let edit_rules = gtk::Button::with_label(&i18n::text("Edit Routing Rules for This URL"));
+    edit_rules.update_property(&[gtk::accessible::Property::Label(
+        "Edit Routing Rules for current URL",
+    )]);
+    edit_rules.connect_clicked(glib::clone!(
+        #[weak]
+        application,
+        #[strong]
+        session,
+        move |_| {
+            let existing = configuration::load_optional().ok().flatten();
+            setup::present(&application, session.clone(), existing);
+        }
+    ));
+    content.append(&edit_rules);
 
     let search = gtk::SearchEntry::builder()
         .placeholder_text(i18n::text("Filter destinations"))
@@ -446,7 +530,7 @@ pub(crate) fn show_picker(application: &adw::Application, session: PickerSession
     session.picker_window.borrow().set(Some(&window));
     search.set_key_capture_widget(Some(&window));
 
-    update_private_mode(&list, &private_mode, &destinations);
+    apply_preselection(&list, &private_mode, &destinations, &current);
     list.connect_selected_rows_changed(glib::clone!(
         #[weak]
         private_mode,
@@ -496,6 +580,7 @@ pub(crate) fn show_picker(application: &adw::Application, session: PickerSession
                 },
                 &destinations[index],
                 &pending,
+                &destinations,
                 private_mode.is_active(),
             );
         }
@@ -679,6 +764,7 @@ pub(crate) fn show_picker(application: &adw::Application, session: PickerSession
                     },
                     &destinations[index],
                     &pending,
+                    &destinations,
                     private_mode.is_active(),
                 );
             }
@@ -701,6 +787,7 @@ pub(crate) fn show_picker(application: &adw::Application, session: PickerSession
                         remaining: &remaining,
                     },
                     &pending,
+                    &destinations,
                 );
                 glib::Propagation::Stop
             }
@@ -734,13 +821,18 @@ pub(crate) fn show_picker(application: &adw::Application, session: PickerSession
             _ => glib::Propagation::Proceed,
         }
     });
+    let rebuilding_on_close = Rc::clone(&session.rebuilding);
     window.connect_close_request(move |_| {
-        pending_on_close.borrow_mut().clear();
+        if !*rebuilding_on_close.borrow() {
+            pending_on_close.borrow_mut().clear();
+        }
         glib::Propagation::Proceed
     });
     window.add_controller(keys);
     window.present();
-    search.grab_focus();
+    if current.preselection.is_none() {
+        search.grab_focus();
+    }
 }
 
 fn destination_search_text(destination: &BrowserDestination) -> String {
@@ -816,6 +908,36 @@ fn update_private_mode(
     private_mode.update_property(&[gtk::accessible::Property::Description(&description)]);
 }
 
+fn apply_preselection(
+    list: &gtk::ListBox,
+    private_mode: &gtk::CheckButton,
+    destinations: &[BrowserDestination],
+    request: &PendingRequest,
+) {
+    let selected = request
+        .preselection
+        .as_ref()
+        .and_then(|preselection| {
+            destinations
+                .iter()
+                .position(|destination| destination.id == preselection.destination_id)
+        })
+        .and_then(|index| list.row_at_index(index as i32))
+        .or_else(|| list.row_at_index(0));
+    list.select_row(selected.as_ref());
+    update_private_mode(list, private_mode, destinations);
+    let private = request
+        .preselection
+        .as_ref()
+        .is_some_and(|preselection| preselection.mode == LaunchMode::Private);
+    private_mode.set_active(private && private_mode.is_sensitive());
+    if request.preselection.is_some()
+        && let Some(selected) = selected
+    {
+        selected.grab_focus();
+    }
+}
+
 fn select_relative(list: &gtk::ListBox, rows: &[gtk::ListBoxRow], direction: isize) {
     let selected = list.selected_row().map(|row| row.index() as isize);
     let start = selected.unwrap_or(if direction > 0 {
@@ -839,7 +961,7 @@ fn select_relative(list: &gtk::ListBox, rows: &[gtk::ListBoxRow], direction: isi
 
 fn activate_selected(
     surface: &PickerSurface<'_>,
-    pending: &Rc<RefCell<VecDeque<WebTarget>>>,
+    pending: &Rc<RefCell<VecDeque<PendingRequest>>>,
     destinations: &[BrowserDestination],
 ) {
     let Some(row) = surface.list.selected_row() else {
@@ -852,13 +974,15 @@ fn activate_selected(
         surface,
         destination,
         pending,
+        destinations,
         surface.private_mode.is_active(),
     );
 }
 
 fn advance_pending_request(
     surface: &PickerSurface<'_>,
-    pending: &Rc<RefCell<VecDeque<WebTarget>>>,
+    pending: &Rc<RefCell<VecDeque<PendingRequest>>>,
+    destinations: &[BrowserDestination],
 ) {
     let next = {
         let mut pending = pending.borrow_mut();
@@ -876,8 +1000,9 @@ fn advance_pending_request(
             surface.reveal,
             surface.error,
             surface.search,
-            &next,
+            &next.target,
         );
+        apply_preselection(surface.list, surface.private_mode, destinations, &next);
     } else {
         surface.window.close();
     }
@@ -886,10 +1011,11 @@ fn advance_pending_request(
 fn launch_destination(
     surface: &PickerSurface<'_>,
     destination: &BrowserDestination,
-    pending: &Rc<RefCell<VecDeque<WebTarget>>>,
+    pending: &Rc<RefCell<VecDeque<PendingRequest>>>,
+    destinations: &[BrowserDestination],
     private: bool,
 ) {
-    let Some(target) = pending.borrow().front().cloned() else {
+    let Some(request) = pending.borrow().front().cloned() else {
         return;
     };
     if let Some(reason) = &destination.unavailable_reason {
@@ -901,8 +1027,8 @@ fn launch_destination(
         surface.error.grab_focus();
         return;
     }
-    match launcher::dispatch(destination, &target, private) {
-        Ok(()) => advance_pending_request(surface, pending),
+    match launcher::dispatch(destination, &request.target, private) {
+        Ok(()) => advance_pending_request(surface, pending, destinations),
         Err(failure) => {
             let reason = match failure.reason {
                 launcher::FailureReason::NotFound => i18n::text("executable was not found"),

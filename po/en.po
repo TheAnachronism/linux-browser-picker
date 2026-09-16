@@ -260,3 +260,135 @@ msgstr "1 Pending Request"
 
 msgid "{count} Pending Requests"
 msgstr "{count} Pending Requests"
+
+msgid "Routing Rule ID '{id}' must be a lowercase slug"
+msgstr "Routing Rule ID '{id}' must be a lowercase slug"
+
+msgid "Routing Rule ID '{id}' is not unique"
+msgstr "Routing Rule ID '{id}' is not unique"
+
+msgid "Routing Rule '{id}' must have a non-empty unique name"
+msgstr "Routing Rule '{id}' must have a non-empty unique name"
+
+msgid "Routing Rule name '{name}' is not unique"
+msgstr "Routing Rule name '{name}' is not unique"
+
+msgid "Routing Rule '{id}' scheme must be HTTP or HTTPS"
+msgstr "Routing Rule '{id}' scheme must be HTTP or HTTPS"
+
+msgid "Routing Rule '{id}' host must be a valid domain or IP address"
+msgstr "Routing Rule '{id}' host must be a valid domain or IP address"
+
+msgid "Routing Rule '{id}' must contain at least one condition group"
+msgstr "Routing Rule '{id}' must contain at least one condition group"
+
+msgid "Routing Rule '{id}' condition groups must not be empty"
+msgstr "Routing Rule '{id}' condition groups must not be empty"
+
+msgid "Routing action references unknown destination '{id}'"
+msgstr "Routing action references unknown destination '{id}'"
+
+msgid "Browser Destination '{id}' does not support private Launch Mode"
+msgstr "Browser Destination '{id}' does not support private Launch Mode"
+
+msgid "Saved configuration could not be reloaded"
+msgstr "Saved configuration could not be reloaded"
+
+msgid "Edit Routing Rules for This URL"
+msgstr "Edit Routing Rules for This URL"
+
+msgid "Routing Rules"
+msgstr "Routing Rules"
+
+msgid ""
+"Enabled rules run from top to bottom. Groups are OR alternatives; every "
+"condition in a group must match. Matching uses the normalized Matching URL "
+"shown by Test Rules."
+msgstr ""
+"Enabled rules run from top to bottom. Groups are OR alternatives; every "
+"condition in a group must match. Matching uses the normalized Matching URL "
+"shown by Test Rules."
+
+msgid "Add Routing Rule"
+msgstr "Add Routing Rule"
+
+msgid "Test Rules"
+msgstr "Test Rules"
+
+msgid "Open an URL to test Routing Rules."
+msgstr "Open an URL to test Routing Rules."
+
+msgid "Matching URL: {url}"
+msgstr "Matching URL: {url}"
+
+msgid "Enabled"
+msgstr "Enabled"
+
+msgid "Add OR group"
+msgstr "Add OR group"
+
+msgid "All conditions below must match (AND)"
+msgstr "All conditions below must match (AND)"
+
+msgid "Add AND condition"
+msgstr "Add AND condition"
+
+msgid "Include subdomains"
+msgstr "Include subdomains"
+
+msgid "Ignore case"
+msgstr "Ignore case"
+
+msgid "Not"
+msgstr "Not"
+
+msgid "_Save and Apply"
+msgstr "_Save and Apply"
+
+msgid "_Save configuration"
+msgstr "_Save configuration"
+
+msgid "Open automatically"
+msgstr "Open automatically"
+
+msgid "Preselect in Picker"
+msgstr "Preselect in Picker"
+
+msgid "Normal"
+msgstr "Normal"
+
+msgid "Private"
+msgstr "Private"
+
+msgid "Scheme"
+msgstr "Scheme"
+
+msgid "Host"
+msgstr "Host"
+
+msgid "Port"
+msgstr "Port"
+
+msgid "Exact path"
+msgstr "Exact path"
+
+msgid "Path prefix"
+msgstr "Path prefix"
+
+msgid "Query key"
+msgstr "Query key"
+
+msgid "Query value"
+msgstr "Query value"
+
+msgid "Routing Rule ID"
+msgstr "Routing Rule ID"
+
+msgid "Routing Rule name"
+msgstr "Routing Rule name"
+
+msgid "URL Condition query key"
+msgstr "URL Condition query key"
+
+msgid "URL Condition value"
+msgstr "URL Condition value"

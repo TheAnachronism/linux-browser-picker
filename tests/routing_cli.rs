@@ -573,3 +573,145 @@ fn discovered_destination_rejects_parsed_command_fields() {
         "Configuration is not valid versioned TOML\n"
     );
 }
+
+#[test]
+fn routing_rule_matches_idna_host_using_the_matching_url() {
+    let config_home = TempDir::new().expect("temporary configuration home should be created");
+    let executable = install_fake_browser(&config_home);
+    write_raw_config(
+        &config_home,
+        &format!(
+            "version = 1\n\n[[destinations]]\nid = \"controlled\"\nlabel = \"Controlled Browser\"\n\n[destinations.application]\ntype = \"manual\"\nexecutable = \"{}\"\nargs = [\"--rule\", \"{{target}}\"]\n\n[[rules]]\nid = \"international-host\"\nname = \"International host\"\nenabled = true\n\n[rules.action]\ntype = \"open\"\ndestination = \"controlled\"\nmode = \"normal\"\n\n[[rules.groups]]\n\n[[rules.groups.conditions]]\ntype = \"host\"\nvalue = \"xn--bcher-kva.example\"\ninclude_subdomains = false\n\n[fallback]\naction = \"show-picker\"\n",
+            executable.display()
+        ),
+    );
+    let received = config_home.path().join("received-argv");
+    let target = "HTTPS://BÜCHER.example:443/Path?value=a%2Fb#Fragment";
+
+    let output = browser_picker(&config_home)
+        .env("BROWSER_PICKER_TEST_OUTPUT", &received)
+        .arg(target)
+        .output()
+        .expect("Browser Picker should start");
+
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(wait_for_file(&received), format!("--rule\n{target}\n"));
+}
+
+#[test]
+fn structured_conditions_preserve_encodings_and_match_repeated_query_values() {
+    let config_home = TempDir::new().expect("temporary configuration home should be created");
+    let executable = install_fake_browser(&config_home);
+    write_raw_config(
+        &config_home,
+        &format!(
+            "version = 1\n\n[[destinations]]\nid = \"matched\"\nlabel = \"Matched Browser\"\n\n[destinations.application]\ntype = \"manual\"\nexecutable = \"{}\"\nargs = [\"--matched\", \"{{target}}\"]\n\n[[destinations]]\nid = \"fallback\"\nlabel = \"Fallback Browser\"\n\n[destinations.application]\ntype = \"manual\"\nexecutable = \"{}\"\nargs = [\"--fallback\", \"{{target}}\"]\n\n[[rules]]\nid = \"structured\"\nname = \"Structured conditions\"\nenabled = true\n\n[rules.action]\ntype = \"open\"\ndestination = \"matched\"\n\n[[rules.groups]]\n\n[[rules.groups.conditions]]\ntype = \"scheme\"\nvalue = \"HTTPS\"\n\n[[rules.groups.conditions]]\ntype = \"host\"\nvalue = \"example.com\"\ninclude_subdomains = true\n\n[[rules.groups.conditions]]\ntype = \"path\"\nvalue = \"/Encoded%2F\"\ncomparison = \"prefix\"\n\n[[rules.groups.conditions]]\ntype = \"query-key\"\nkey = \"flag\"\n\n[[rules.groups.conditions]]\ntype = \"query-value\"\nkey = \"value\"\nvalue = \"A+B\"\n\n[[rules.groups.conditions]]\ntype = \"query-value\"\nkey = \"blocked\"\nvalue = \"yes\"\nnegate = true\n\n[fallback]\naction = \"open\"\ndestination = \"fallback\"\n",
+            executable.display(),
+            executable.display()
+        ),
+    );
+    let received = config_home.path().join("received-argv");
+    let target = "https://Sub.Example.com/Encoded%2FSegment?value=no&flag&value=A+B&order=last";
+
+    let output = browser_picker(&config_home)
+        .env("BROWSER_PICKER_TEST_OUTPUT", &received)
+        .arg(target)
+        .output()
+        .expect("Browser Picker should start");
+
+    assert!(output.status.success());
+    assert_eq!(wait_for_file(&received), format!("--matched\n{target}\n"));
+
+    fs::remove_file(&received).expect("first dispatch record should be removable");
+    let boundary_target = "https://notexample.com/Encoded%2FSegment?flag&value=A+B";
+    let output = browser_picker(&config_home)
+        .env("BROWSER_PICKER_TEST_OUTPUT", &received)
+        .arg(boundary_target)
+        .output()
+        .expect("Browser Picker should start");
+    assert!(output.status.success());
+    assert_eq!(
+        wait_for_file(&received),
+        format!("--fallback\n{boundary_target}\n")
+    );
+}
+
+#[test]
+fn default_ports_are_absent_and_first_enabled_matching_rule_wins() {
+    let config_home = TempDir::new().expect("temporary configuration home should be created");
+    let executable = install_fake_browser(&config_home);
+    write_raw_config(
+        &config_home,
+        &format!(
+            "version = 1\n\n[[destinations]]\nid = \"first\"\nlabel = \"First Browser\"\n\n[destinations.application]\ntype = \"manual\"\nexecutable = \"{}\"\nargs = [\"--first\", \"{{target}}\"]\n\n[[destinations]]\nid = \"second\"\nlabel = \"Second Browser\"\n\n[destinations.application]\ntype = \"manual\"\nexecutable = \"{}\"\nargs = [\"--second\", \"{{target}}\"]\n\n[[rules]]\nid = \"disabled\"\nname = \"Disabled first\"\nenabled = false\n\n[rules.action]\ntype = \"open\"\ndestination = \"second\"\n\n[[rules.groups]]\n\n[[rules.groups.conditions]]\ntype = \"host\"\nvalue = \"example.com\"\n\n[[rules]]\nid = \"first-winner\"\nname = \"First winner\"\nenabled = true\n\n[rules.action]\ntype = \"open\"\ndestination = \"first\"\n\n[[rules.groups]]\n\n[[rules.groups.conditions]]\ntype = \"host\"\nvalue = \"example.com\"\n\n[[rules]]\nid = \"later-match\"\nname = \"Later match\"\nenabled = true\n\n[rules.action]\ntype = \"open\"\ndestination = \"second\"\n\n[[rules.groups]]\n\n[[rules.groups.conditions]]\ntype = \"host\"\nvalue = \"example.com\"\n\n[fallback]\naction = \"open\"\ndestination = \"second\"\n",
+            executable.display(),
+            executable.display()
+        ),
+    );
+    let received = config_home.path().join("received-argv");
+    let target = "https://example.com:443/";
+
+    let output = browser_picker(&config_home)
+        .env("BROWSER_PICKER_TEST_OUTPUT", &received)
+        .arg(target)
+        .output()
+        .expect("Browser Picker should start");
+
+    assert!(output.status.success());
+    assert_eq!(wait_for_file(&received), format!("--first\n{target}\n"));
+}
+
+#[test]
+fn or_groups_use_normalized_ports_and_explicit_case_options() {
+    let config_home = TempDir::new().expect("temporary configuration home should be created");
+    let executable = install_fake_browser(&config_home);
+    write_raw_config(
+        &config_home,
+        &format!(
+            "version = 1\n\n[[destinations]]\nid = \"wrong\"\nlabel = \"Wrong Browser\"\n\n[destinations.application]\ntype = \"manual\"\nexecutable = \"{}\"\nargs = [\"--wrong\", \"{{target}}\"]\n\n[[destinations]]\nid = \"controlled\"\nlabel = \"Controlled Browser\"\n\n[destinations.application]\ntype = \"manual\"\nexecutable = \"{}\"\nargs = [\"--matched\", \"{{target}}\"]\n\n[[rules]]\nid = \"explicit-default-port\"\nname = \"Explicit default port\"\nenabled = true\n\n[rules.action]\ntype = \"open\"\ndestination = \"wrong\"\n\n[[rules.groups]]\n\n[[rules.groups.conditions]]\ntype = \"port\"\nvalue = 443\n\n[[rules]]\nid = \"or-groups\"\nname = \"OR groups\"\nenabled = true\n\n[rules.action]\ntype = \"open\"\ndestination = \"controlled\"\n\n[[rules.groups]]\n\n[[rules.groups.conditions]]\ntype = \"path\"\nvalue = \"/never\"\ncomparison = \"exact\"\n\n[[rules.groups]]\n\n[[rules.groups.conditions]]\ntype = \"path\"\nvalue = \"/case\"\ncomparison = \"exact\"\ncase_insensitive = true\n\n[[rules.groups.conditions]]\ntype = \"query-value\"\nkey = \"Token\"\nvalue = \"VALUE\"\ncase_insensitive = true\n\n[fallback]\naction = \"show-picker\"\n",
+            executable.display(),
+            executable.display()
+        ),
+    );
+    let received = config_home.path().join("received-argv");
+    let target = "https://example.com:443/CASE?token=value";
+
+    let output = browser_picker(&config_home)
+        .env("BROWSER_PICKER_TEST_OUTPUT", &received)
+        .arg(target)
+        .output()
+        .expect("Browser Picker should start");
+
+    assert!(output.status.success());
+    assert_eq!(wait_for_file(&received), format!("--matched\n{target}\n"));
+}
+
+#[test]
+fn preselection_does_not_dispatch_automatically() {
+    let config_home = TempDir::new().expect("temporary configuration home should be created");
+    let executable = install_fake_browser(&config_home);
+    write_raw_config(
+        &config_home,
+        &format!(
+            "version = 1\n\n[[destinations]]\nid = \"controlled\"\nlabel = \"Controlled Browser\"\n\n[destinations.application]\ntype = \"manual\"\nexecutable = \"{}\"\nargs = [\"--preselected\", \"{{target}}\"]\nprivate_args = [\"--private\", \"{{target}}\"]\n\n[[rules]]\nid = \"suggest\"\nname = \"Suggest controlled\"\nenabled = true\n\n[rules.action]\ntype = \"preselect\"\ndestination = \"controlled\"\nmode = \"private\"\n\n[[rules.groups]]\n\n[[rules.groups.conditions]]\ntype = \"host\"\nvalue = \"suggested.example\"\n\n[fallback]\naction = \"open\"\ndestination = \"controlled\"\n",
+            executable.display()
+        ),
+    );
+    let received = config_home.path().join("received-argv");
+    let mut child = browser_picker(&config_home)
+        .env("BROWSER_PICKER_TEST_OUTPUT", &received)
+        .arg("https://suggested.example/path")
+        .spawn()
+        .expect("Browser Picker should start");
+    thread::sleep(Duration::from_millis(300));
+    assert!(
+        received.exists() == false,
+        "Preselection must queue instead of dispatching"
+    );
+    let _ = child.kill();
+    let _ = child.wait();
+}

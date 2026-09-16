@@ -38,9 +38,103 @@ pub enum FallbackAction {
     ShowPicker,
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum LaunchMode {
+    #[default]
+    Normal,
+    Private,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(tag = "type", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum RoutingAction {
+    Open {
+        destination: String,
+        #[serde(default)]
+        mode: LaunchMode,
+    },
+    Preselect {
+        destination: String,
+        #[serde(default)]
+        mode: LaunchMode,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PathComparison {
+    #[default]
+    Exact,
+    Prefix,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(tag = "type", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum UrlCondition {
+    Scheme {
+        value: String,
+        #[serde(default)]
+        negate: bool,
+    },
+    Host {
+        value: String,
+        #[serde(default)]
+        include_subdomains: bool,
+        #[serde(default)]
+        negate: bool,
+    },
+    Port {
+        value: u16,
+        #[serde(default)]
+        negate: bool,
+    },
+    Path {
+        value: String,
+        #[serde(default)]
+        comparison: PathComparison,
+        #[serde(default)]
+        case_insensitive: bool,
+        #[serde(default)]
+        negate: bool,
+    },
+    QueryKey {
+        key: String,
+        #[serde(default)]
+        case_insensitive: bool,
+        #[serde(default)]
+        negate: bool,
+    },
+    QueryValue {
+        key: String,
+        value: String,
+        #[serde(default)]
+        case_insensitive: bool,
+        #[serde(default)]
+        negate: bool,
+    },
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConditionGroup {
+    pub conditions: Vec<UrlCondition>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RoutingRule {
+    pub id: String,
+    pub name: String,
+    pub enabled: bool,
+    pub groups: Vec<ConditionGroup>,
+    pub action: RoutingAction,
+}
+
 #[derive(Clone, Debug)]
 pub struct Configuration {
     pub destinations: Vec<BrowserDestination>,
+    pub rules: Vec<RoutingRule>,
     pub fallback: FallbackAction,
 }
 
@@ -55,6 +149,16 @@ pub enum Error {
     DuplicateId(String),
     InvalidLabel(String),
     DuplicateLabel(String),
+    InvalidRuleId(String),
+    DuplicateRuleId(String),
+    InvalidRuleName(String),
+    DuplicateRuleName(String),
+    InvalidRuleScheme(String),
+    InvalidRuleHost(String),
+    EmptyRuleGroups(String),
+    EmptyConditionGroup(String),
+    UnknownDestination(String),
+    UnsupportedPrivateMode(String),
     UnknownFallback(String),
     InvalidExecutable(String),
     InvalidTargetTemplate(String),
@@ -115,6 +219,45 @@ impl Error {
                 "Browser Destination display label '{label}' is not unique",
                 &[("{label}", label)],
             ),
+            Self::InvalidRuleId(id) => i18n::text_with(
+                "Routing Rule ID '{id}' must be a lowercase slug",
+                &[("{id}", id)],
+            ),
+            Self::DuplicateRuleId(id) => {
+                i18n::text_with("Routing Rule ID '{id}' is not unique", &[("{id}", id)])
+            }
+            Self::InvalidRuleName(id) => i18n::text_with(
+                "Routing Rule '{id}' must have a non-empty unique name",
+                &[("{id}", id)],
+            ),
+            Self::DuplicateRuleName(name) => i18n::text_with(
+                "Routing Rule name '{name}' is not unique",
+                &[("{name}", name)],
+            ),
+            Self::InvalidRuleScheme(id) => i18n::text_with(
+                "Routing Rule '{id}' scheme must be HTTP or HTTPS",
+                &[("{id}", id)],
+            ),
+            Self::InvalidRuleHost(id) => i18n::text_with(
+                "Routing Rule '{id}' host must be a valid domain or IP address",
+                &[("{id}", id)],
+            ),
+            Self::EmptyRuleGroups(id) => i18n::text_with(
+                "Routing Rule '{id}' must contain at least one condition group",
+                &[("{id}", id)],
+            ),
+            Self::EmptyConditionGroup(id) => i18n::text_with(
+                "Routing Rule '{id}' condition groups must not be empty",
+                &[("{id}", id)],
+            ),
+            Self::UnknownDestination(id) => i18n::text_with(
+                "Routing action references unknown destination '{id}'",
+                &[("{id}", id)],
+            ),
+            Self::UnsupportedPrivateMode(id) => i18n::text_with(
+                "Browser Destination '{id}' does not support private Launch Mode",
+                &[("{id}", id)],
+            ),
             Self::UnknownFallback(id) => i18n::text_with(
                 "Fallback references unknown destination '{id}'",
                 &[("{id}", id)],
@@ -145,6 +288,8 @@ struct ConfigFile {
     version: u32,
     destinations: Vec<DestinationFile>,
     fallback: FallbackFile,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    rules: Vec<RoutingRule>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -212,10 +357,12 @@ pub fn save(configuration: &Configuration) -> Result<(), Error> {
 
 pub fn assemble(
     destinations: Vec<BrowserDestination>,
+    rules: Vec<RoutingRule>,
     fallback: FallbackAction,
 ) -> Result<Configuration, Error> {
     validate(to_file(&Configuration {
         destinations,
+        rules,
         fallback,
     }))
 }
@@ -257,6 +404,18 @@ fn validate(file: ConfigFile) -> Result<Configuration, Error> {
         destinations.push(validate_destination(destination)?);
     }
 
+    let mut rule_ids = HashSet::new();
+    let mut rule_names = HashSet::new();
+    let mut rules = Vec::with_capacity(file.rules.len());
+    for rule in file.rules {
+        rules.push(validate_rule(
+            rule,
+            &destinations,
+            &mut rule_ids,
+            &mut rule_names,
+        )?);
+    }
+
     let fallback = match file.fallback {
         FallbackFile::Open { destination } => {
             if !ids.contains(&destination) {
@@ -268,8 +427,69 @@ fn validate(file: ConfigFile) -> Result<Configuration, Error> {
     };
     Ok(Configuration {
         destinations,
+        rules,
         fallback,
     })
+}
+
+fn validate_rule(
+    mut rule: RoutingRule,
+    destinations: &[BrowserDestination],
+    ids: &mut HashSet<String>,
+    names: &mut HashSet<String>,
+) -> Result<RoutingRule, Error> {
+    if !is_valid_id(&rule.id) {
+        return Err(Error::InvalidRuleId(rule.id));
+    }
+    if !ids.insert(rule.id.clone()) {
+        return Err(Error::DuplicateRuleId(rule.id));
+    }
+    if rule.name.trim().is_empty() {
+        return Err(Error::InvalidRuleName(rule.id));
+    }
+    if !names.insert(rule.name.clone()) {
+        return Err(Error::DuplicateRuleName(rule.name));
+    }
+    if rule.groups.is_empty() {
+        return Err(Error::EmptyRuleGroups(rule.id));
+    }
+    for group in &mut rule.groups {
+        if group.conditions.is_empty() {
+            return Err(Error::EmptyConditionGroup(rule.id));
+        }
+        for condition in &mut group.conditions {
+            match condition {
+                UrlCondition::Scheme { value, .. } => {
+                    *value = value.to_ascii_lowercase();
+                    if !matches!(value.as_str(), "http" | "https") {
+                        return Err(Error::InvalidRuleScheme(rule.id));
+                    }
+                }
+                UrlCondition::Host { value, .. } => {
+                    let ascii = idna::domain_to_ascii(value)
+                        .map_err(|_| Error::InvalidRuleHost(rule.id.clone()))?
+                        .to_ascii_lowercase();
+                    if ascii.is_empty() || url::Host::parse(&ascii).is_err() {
+                        return Err(Error::InvalidRuleHost(rule.id));
+                    }
+                    *value = ascii;
+                }
+                _ => {}
+            }
+        }
+    }
+    let (destination_id, mode) = match &rule.action {
+        RoutingAction::Open { destination, mode }
+        | RoutingAction::Preselect { destination, mode } => (destination, mode),
+    };
+    let destination = destinations
+        .iter()
+        .find(|candidate| candidate.id == *destination_id)
+        .ok_or_else(|| Error::UnknownDestination(destination_id.clone()))?;
+    if *mode == LaunchMode::Private && !destination.supports_private() {
+        return Err(Error::UnsupportedPrivateMode(destination_id.clone()));
+    }
+    Ok(rule)
 }
 
 fn validate_destination(destination: DestinationFile) -> Result<BrowserDestination, Error> {
@@ -408,6 +628,7 @@ fn to_file(configuration: &Configuration) -> ConfigFile {
                 },
             })
             .collect(),
+        rules: configuration.rules.clone(),
         fallback: match &configuration.fallback {
             FallbackAction::Open(destination) => FallbackFile::Open {
                 destination: destination.clone(),
