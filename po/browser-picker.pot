@@ -28,5 +28,68 @@ msgstr ""
 msgid "Unknown argument"
 msgstr ""
 
-msgid "Browser Picker\nChoose where links and local files open.\n\nUsage:\n  browser-picker\n  browser-picker --help\n  browser-picker --version\n\nOptions:\n  -h, --help       Show this help\n  -V, --version    Show version\n"
+msgid "Browser Picker\nChoose where links and local files open.\n\nUsage:\n  browser-picker\n  browser-picker <http(s)-url>\n  browser-picker --help\n  browser-picker --version\n\nOptions:\n  -h, --help       Show this help\n  -V, --version    Show version\n"
+msgstr ""
+
+msgid "Routing an Open Target requires a graphical session"
+msgstr ""
+
+msgid "Open Target must be valid UTF-8"
+msgstr ""
+
+msgid "Open Target exceeds the 65536-byte limit"
+msgstr ""
+
+msgid "Invalid Open Target: expected an absolute HTTP or HTTPS URL"
+msgstr ""
+
+msgid "Unsupported Open Target scheme; expected HTTP or HTTPS"
+msgstr ""
+
+msgid "XDG_CONFIG_HOME must be an absolute path"
+msgstr ""
+
+msgid "HOME is not set"
+msgstr ""
+
+msgid "Browser Picker configuration was not found"
+msgstr ""
+
+msgid "Browser Picker configuration permission was denied"
+msgstr ""
+
+msgid "Browser Picker configuration could not be read"
+msgstr ""
+
+msgid "Configuration is not valid versioned TOML"
+msgstr ""
+
+msgid "Unsupported configuration version {version}; expected version 1"
+msgstr ""
+
+msgid "Browser Destination ID '{id}' must be a lowercase slug"
+msgstr ""
+
+msgid "Browser Destination ID '{id}' is not unique"
+msgstr ""
+
+msgid "Fallback references unknown destination '{id}'"
+msgstr ""
+
+msgid "Manual destination '{id}' executable must be an absolute path or a PATH-resolved name"
+msgstr ""
+
+msgid "Manual destination '{id}' must contain exactly one '{placeholder}' argument"
+msgstr ""
+
+msgid "executable was not found"
+msgstr ""
+
+msgid "executable permission was denied"
+msgstr ""
+
+msgid "process could not be started"
+msgstr ""
+
+msgid "Browser Destination '{id}' could not accept dispatch: {reason}"
 msgstr ""

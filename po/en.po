@@ -34,5 +34,68 @@ msgstr "Configure browser destinations and routing rules."
 msgid "Unknown argument"
 msgstr "Unknown argument"
 
-msgid "Browser Picker\nChoose where links and local files open.\n\nUsage:\n  browser-picker\n  browser-picker --help\n  browser-picker --version\n\nOptions:\n  -h, --help       Show this help\n  -V, --version    Show version\n"
-msgstr "Browser Picker\nChoose where links and local files open.\n\nUsage:\n  browser-picker\n  browser-picker --help\n  browser-picker --version\n\nOptions:\n  -h, --help       Show this help\n  -V, --version    Show version\n"
+msgid "Browser Picker\nChoose where links and local files open.\n\nUsage:\n  browser-picker\n  browser-picker <http(s)-url>\n  browser-picker --help\n  browser-picker --version\n\nOptions:\n  -h, --help       Show this help\n  -V, --version    Show version\n"
+msgstr "Browser Picker\nChoose where links and local files open.\n\nUsage:\n  browser-picker\n  browser-picker <http(s)-url>\n  browser-picker --help\n  browser-picker --version\n\nOptions:\n  -h, --help       Show this help\n  -V, --version    Show version\n"
+
+msgid "Routing an Open Target requires a graphical session"
+msgstr "Routing an Open Target requires a graphical session"
+
+msgid "Open Target must be valid UTF-8"
+msgstr "Open Target must be valid UTF-8"
+
+msgid "Open Target exceeds the 65536-byte limit"
+msgstr "Open Target exceeds the 65536-byte limit"
+
+msgid "Invalid Open Target: expected an absolute HTTP or HTTPS URL"
+msgstr "Invalid Open Target: expected an absolute HTTP or HTTPS URL"
+
+msgid "Unsupported Open Target scheme; expected HTTP or HTTPS"
+msgstr "Unsupported Open Target scheme; expected HTTP or HTTPS"
+
+msgid "XDG_CONFIG_HOME must be an absolute path"
+msgstr "XDG_CONFIG_HOME must be an absolute path"
+
+msgid "HOME is not set"
+msgstr "HOME is not set"
+
+msgid "Browser Picker configuration was not found"
+msgstr "Browser Picker configuration was not found"
+
+msgid "Browser Picker configuration permission was denied"
+msgstr "Browser Picker configuration permission was denied"
+
+msgid "Browser Picker configuration could not be read"
+msgstr "Browser Picker configuration could not be read"
+
+msgid "Configuration is not valid versioned TOML"
+msgstr "Configuration is not valid versioned TOML"
+
+msgid "Unsupported configuration version {version}; expected version 1"
+msgstr "Unsupported configuration version {version}; expected version 1"
+
+msgid "Browser Destination ID '{id}' must be a lowercase slug"
+msgstr "Browser Destination ID '{id}' must be a lowercase slug"
+
+msgid "Browser Destination ID '{id}' is not unique"
+msgstr "Browser Destination ID '{id}' is not unique"
+
+msgid "Fallback references unknown destination '{id}'"
+msgstr "Fallback references unknown destination '{id}'"
+
+msgid "Manual destination '{id}' executable must be an absolute path or a PATH-resolved name"
+msgstr "Manual destination '{id}' executable must be an absolute path or a PATH-resolved name"
+
+msgid "Manual destination '{id}' must contain exactly one '{placeholder}' argument"
+msgstr "Manual destination '{id}' must contain exactly one '{placeholder}' argument"
+
+msgid "executable was not found"
+msgstr "executable was not found"
+
+msgid "executable permission was denied"
+msgstr "executable permission was denied"
+
+msgid "process could not be started"
+msgstr "process could not be started"
+
+msgid "Browser Destination '{id}' could not accept dispatch: {reason}"
+msgstr "Browser Destination '{id}' could not accept dispatch: {reason}"

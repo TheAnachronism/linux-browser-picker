@@ -19,3 +19,25 @@ pub fn initialize() {
 pub fn text(message: &str) -> String {
     gettext(message)
 }
+
+pub fn text_with(message: &str, replacements: &[(&str, &str)]) -> String {
+    debug_assert!(
+        replacements
+            .iter()
+            .all(|(placeholder, _)| message.matches(placeholder).count() == 1)
+    );
+
+    let translated = gettext(message);
+    let mut rendered = if replacements
+        .iter()
+        .all(|(placeholder, _)| translated.matches(placeholder).count() == 1)
+    {
+        translated
+    } else {
+        message.to_owned()
+    };
+    for (placeholder, value) in replacements {
+        rendered = rendered.replacen(placeholder, value, 1);
+    }
+    rendered
+}
