@@ -123,7 +123,7 @@
 
                 cat > "$TMPDIR/controlled-browser" <<'EOF'
 #!/bin/sh
-printf '%s\n' "$@" > "''${BROWSER_PICKER_TEST_OUTPUT:-$TMPDIR/received-argv}"
+printf '%s\n' "$@" >> "''${BROWSER_PICKER_TEST_OUTPUT:-$TMPDIR/received-argv}"
 EOF
                 chmod 700 "$TMPDIR/controlled-browser"
                 cat > "$XDG_DATA_HOME/applications/aaa-controlled.desktop" <<EOF
@@ -315,10 +315,141 @@ $target"
                       wait "$launcher"
                     }
 
+                    run_queue_and_assert_fifo() {
+                      export BROWSER_PICKER_TEST_OUTPUT="$TMPDIR/queue-argv"
+                      rm -f "$BROWSER_PICKER_TEST_OUTPUT"
+                      first="https://first.example/"
+                      second="https://second.example/path"
+                      duplicate="https://first.example/"
+
+                      ${browser-picker}/bin/browser-picker "$first" &
+                      launcher=$!
+                      window=
+                      for attempt in $(seq 1 100); do
+                        set -- $(xdotool search --onlyvisible --name "^Browser Picker$" 2>/dev/null || true)
+                        if [ "$#" -gt 0 ]; then
+                          window=$1
+                          break
+                        fi
+                        sleep 0.1
+                      done
+                      test -n "$window"
+                      xdotool windowfocus --sync "$window"
+
+                      ${browser-picker}/bin/browser-picker "$second" "$duplicate"
+                      kill -0 "$launcher"
+
+                      for expected_lines in 2 4 6; do
+                        xdotool key alt+2
+                        for attempt in $(seq 1 100); do
+                          actual_lines=$(wc -l < "$BROWSER_PICKER_TEST_OUTPUT" 2>/dev/null || printf 0)
+                          test "$actual_lines" -lt "$expected_lines" || break
+                          sleep 0.1
+                        done
+                      done
+
+                      test "$(cat "$BROWSER_PICKER_TEST_OUTPUT")" = "--normal
+$first
+--normal
+$second
+--normal
+$duplicate"
+                      wait "$launcher"
+                      unset BROWSER_PICKER_TEST_OUTPUT
+                    }
+
+                    run_queue_limit_and_escape() {
+                      export BROWSER_PICKER_TEST_OUTPUT="$TMPDIR/queue-limit-argv"
+                      rm -f "$BROWSER_PICKER_TEST_OUTPUT"
+                      first="https://cancelled.example/"
+
+                      ${browser-picker}/bin/browser-picker "$first" &
+                      launcher=$!
+                      window=
+                      for attempt in $(seq 1 100); do
+                        set -- $(xdotool search --onlyvisible --name "^Browser Picker$" 2>/dev/null || true)
+                        if [ "$#" -gt 0 ]; then
+                          window=$1
+                          break
+                        fi
+                        sleep 0.1
+                      done
+                      test -n "$window"
+
+                      set --
+                      for index in $(seq 1 100); do
+                        set -- "$@" "https://queue-$index.example/"
+                      done
+                      if ${browser-picker}/bin/browser-picker "$@" 2>"$TMPDIR/queue-limit-error"; then
+                        false
+                      else
+                        test "$?" -eq 6
+                      fi
+                      grep -Fx "The Pending Request queue is full" "$TMPDIR/queue-limit-error"
+
+                      xdotool windowfocus --sync "$window"
+                      xdotool key Escape
+                      kill -0 "$launcher"
+                      test "$(xdotool getwindowname "$window")" = "Browser Picker"
+                      xdotool key alt+2
+                      for attempt in $(seq 1 100); do
+                        test -f "$BROWSER_PICKER_TEST_OUTPUT" && break
+                        sleep 0.1
+                      done
+                      test "$(cat "$BROWSER_PICKER_TEST_OUTPUT")" = "--normal
+https://queue-1.example/"
+                      xdotool key --clearmodifiers ctrl+w
+                      wait "$launcher"
+                      unset BROWSER_PICKER_TEST_OUTPUT
+                    }
+
+                    run_activation_limit() {
+                      export BROWSER_PICKER_TEST_OUTPUT="$TMPDIR/activation-limit-argv"
+                      rm -f "$BROWSER_PICKER_TEST_OUTPUT"
+                      ${browser-picker}/bin/browser-picker "https://activation-current.example/" &
+                      launcher=$!
+                      window=
+                      for attempt in $(seq 1 100); do
+                        set -- $(xdotool search --onlyvisible --name "^Browser Picker$" 2>/dev/null || true)
+                        if [ "$#" -gt 0 ]; then
+                          window=$1
+                          break
+                        fi
+                        sleep 0.1
+                      done
+                      test -n "$window"
+
+                      set --
+                      for index in $(seq 1 101); do
+                        set -- "$@" "https://activation-$index.example/"
+                      done
+                      if ${browser-picker}/bin/browser-picker "$@" 2>"$TMPDIR/activation-limit-error"; then
+                        false
+                      else
+                        test "$?" -eq 6
+                      fi
+                      grep -Fx "One activation accepts at most 100 Open Targets" "$TMPDIR/activation-limit-error"
+                      xdotool windowfocus --sync "$window"
+                      xdotool key Escape
+                      xdotool key alt+2
+                      for attempt in $(seq 1 100); do
+                        test -f "$BROWSER_PICKER_TEST_OUTPUT" && break
+                        sleep 0.1
+                      done
+                      test "$(cat "$BROWSER_PICKER_TEST_OUTPUT")" = "--normal
+https://activation-1.example/"
+                      xdotool key --clearmodifiers ctrl+w
+                      wait "$launcher"
+                      unset BROWSER_PICKER_TEST_OUTPUT
+                    }
+
                     run_first_run_and_picker
                     run_and_assert_window ${browser-picker}/bin/browser-picker
                     run_and_assert_window gtk-launch io.github.TheAnachronism.BrowserPicker
                     run_picker_and_assert_launch
+                    run_queue_and_assert_fifo
+                    run_queue_limit_and_escape
+                    run_activation_limit
                   '
 
                 touch "$out"

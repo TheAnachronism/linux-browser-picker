@@ -34,6 +34,7 @@ name = "browser-picker"
 version = "0.1.0"
 dependencies = [
  "gettext-rs",
+ "gio",
  "gtk4",
  "idna",
  "libadwaita",

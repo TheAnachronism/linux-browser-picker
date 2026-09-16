@@ -1,5 +1,7 @@
 use std::cell::RefCell;
 use std::collections::VecDeque;
+use std::env;
+use std::ffi::OsStr;
 use std::rc::Rc;
 
 use adw::prelude::*;
@@ -11,14 +13,36 @@ use crate::configuration::{self, BrowserDestination, DestinationLaunch};
 use crate::i18n;
 use crate::launcher;
 use crate::open_target::WebTarget;
+use crate::routing;
 use crate::setup;
 
 pub const ID: &str = "io.github.TheAnachronism.BrowserPicker";
-
+const MAX_TARGETS_PER_ACTIVATION: usize = 100;
+const MAX_PENDING_REQUESTS: usize = 100;
+const STATUS_OVERFLOW: u8 = 6;
 #[derive(Clone)]
 pub(crate) struct PickerSession {
     pub pending: Rc<RefCell<VecDeque<WebTarget>>>,
-    pub destinations: Rc<Vec<BrowserDestination>>,
+    pub destinations: Rc<RefCell<Vec<BrowserDestination>>>,
+    remaining: Rc<RefCell<glib::WeakRef<gtk::Label>>>,
+    picker_window: Rc<RefCell<glib::WeakRef<adw::ApplicationWindow>>>,
+}
+
+impl PickerSession {
+    pub(crate) fn new() -> Self {
+        Self {
+            pending: Rc::new(RefCell::new(VecDeque::new())),
+            destinations: Rc::new(RefCell::new(Vec::new())),
+            remaining: Rc::new(RefCell::new(glib::WeakRef::new())),
+            picker_window: Rc::new(RefCell::new(glib::WeakRef::new())),
+        }
+    }
+
+    fn update_remaining(&self) {
+        if let Some(label) = self.remaining.borrow().upgrade() {
+            label.set_label(&pending_count_text(self.pending.borrow().len()));
+        }
+    }
 }
 
 struct PickerSurface<'a> {
@@ -31,74 +55,168 @@ struct PickerSurface<'a> {
     reveal: &'a gtk::CheckButton,
     search: &'a gtk::SearchEntry,
     private_mode: &'a gtk::CheckButton,
+    remaining: &'a gtk::Label,
 }
 
 pub fn run() -> glib::ExitCode {
-    let application = adw::Application::builder().application_id(ID).build();
-    application.connect_activate(|application| {
-        if let Some(window) = application.active_window() {
-            window.present();
-            return;
+    let mut flags =
+        gio::ApplicationFlags::HANDLES_COMMAND_LINE | gio::ApplicationFlags::HANDLES_OPEN;
+    if env::var_os("DBUS_SESSION_BUS_ADDRESS").is_none() {
+        flags |= gio::ApplicationFlags::NON_UNIQUE;
+    }
+    let application = adw::Application::builder()
+        .application_id(ID)
+        .flags(flags)
+        .build();
+    let session = PickerSession::new();
+
+    application.connect_activate(glib::clone!(
+        #[strong]
+        session,
+        move |application| present_activation(application, &session)
+    ));
+    application.connect_command_line(glib::clone!(
+        #[strong]
+        session,
+        move |application, command_line| {
+            let arguments = command_line.arguments();
+            let arguments = &arguments[1..];
+            if arguments.is_empty() {
+                present_activation(application, &session);
+                return glib::ExitCode::SUCCESS;
+            }
+
+            let mut status = glib::ExitCode::SUCCESS;
+            let mut needs_setup = false;
+            for (index, argument) in arguments.iter().enumerate() {
+                if index == MAX_TARGETS_PER_ACTIVATION {
+                    command_line.printerr_literal(&format!(
+                        "{}\n",
+                        i18n::text("One activation accepts at most 100 Open Targets")
+                    ));
+                    status = glib::ExitCode::from(STATUS_OVERFLOW);
+                    break;
+                }
+                match accept_target(&session, argument) {
+                    Ok(target_needs_setup) => needs_setup |= target_needs_setup,
+                    Err((message, error_status)) => {
+                        command_line.printerr_literal(&format!("{message}\n"));
+                        if status == glib::ExitCode::SUCCESS {
+                            status = glib::ExitCode::from(error_status);
+                        }
+                    }
+                }
+            }
+
+            present_accepted(application, &session, needs_setup);
+            status
         }
-        match configuration::load_optional() {
-            Ok(existing) => setup::present(
-                application,
-                Rc::new(RefCell::new(VecDeque::new())),
-                existing,
-            ),
-            Err(_) => show_configuration_window(application),
+    ));
+    application.connect_open(glib::clone!(
+        #[strong]
+        session,
+        move |application, files, _| {
+            let mut needs_setup = false;
+            let mut errors = Vec::new();
+            for (index, file) in files.iter().enumerate() {
+                if index == MAX_TARGETS_PER_ACTIVATION {
+                    errors.push(i18n::text(
+                        "One activation accepts at most 100 Open Targets",
+                    ));
+                    break;
+                }
+                let argument = file.uri();
+                match accept_target(&session, OsStr::new(argument.as_str())) {
+                    Ok(target_needs_setup) => needs_setup |= target_needs_setup,
+                    Err((message, _)) => errors.push(message),
+                }
+            }
+            present_accepted(application, &session, needs_setup);
+            if !errors.is_empty() {
+                show_request_error(application, &errors.join("\n"));
+            }
         }
-    });
+    ));
     application.run()
 }
 
-pub fn run_setup(target: WebTarget) -> glib::ExitCode {
-    let application = adw::Application::builder()
-        .application_id(ID)
-        .flags(gio::ApplicationFlags::HANDLES_COMMAND_LINE)
-        .build();
-    let url = target.as_str().to_owned();
-    let pending = Rc::new(RefCell::new(VecDeque::new()));
-    application.connect_command_line(move |application, command_line| {
-        for argument in command_line.arguments().iter().skip(1) {
-            if let Ok(open_target) = WebTarget::parse(argument) {
-                pending.borrow_mut().push_back(open_target);
+fn accept_target(session: &PickerSession, argument: &OsStr) -> Result<bool, (String, u8)> {
+    match routing::route(argument) {
+        Ok(routing::Outcome::Dispatched) => Ok(false),
+        Ok(routing::Outcome::Pick {
+            target,
+            destinations,
+        }) => {
+            if session.pending.borrow().len() == MAX_PENDING_REQUESTS {
+                return Err((
+                    i18n::text("The Pending Request queue is full"),
+                    STATUS_OVERFLOW,
+                ));
             }
+            *session.destinations.borrow_mut() = destinations;
+            session.pending.borrow_mut().push_back(target);
+            Ok(false)
         }
-        if application.active_window().is_none() {
-            setup::present(application, Rc::clone(&pending), None);
-        } else if let Some(window) = application.active_window() {
-            window.present();
+        Ok(routing::Outcome::Setup { target }) => {
+            if session.pending.borrow().len() == MAX_PENDING_REQUESTS {
+                return Err((
+                    i18n::text("The Pending Request queue is full"),
+                    STATUS_OVERFLOW,
+                ));
+            }
+            session.pending.borrow_mut().push_back(target);
+            Ok(true)
         }
-        glib::ExitCode::SUCCESS
-    });
-    application.run_with_args(&["browser-picker", &url])
+        Err(error) => Err(crate::routing_error_message(error)),
+    }
 }
 
-pub fn run_picker(target: WebTarget, destinations: Vec<BrowserDestination>) -> glib::ExitCode {
-    let application = adw::Application::builder()
-        .application_id(ID)
-        .flags(gio::ApplicationFlags::HANDLES_COMMAND_LINE)
-        .build();
-    let url = target.as_str().to_owned();
-    let session = PickerSession {
-        pending: Rc::new(RefCell::new(VecDeque::new())),
-        destinations: Rc::new(destinations),
-    };
-    application.connect_command_line(move |application, command_line| {
-        for argument in command_line.arguments().iter().skip(1) {
-            if let Ok(open_target) = WebTarget::parse(argument) {
-                session.pending.borrow_mut().push_back(open_target);
-            }
-        }
-        if application.active_window().is_none() && !session.pending.borrow().is_empty() {
-            show_picker(application, session.clone());
-        } else if let Some(window) = application.active_window() {
+fn present_accepted(application: &adw::Application, session: &PickerSession, needs_setup: bool) {
+    if needs_setup {
+        if let Some(window) = application.active_window() {
             window.present();
+        } else {
+            let existing = configuration::load_optional().ok().flatten();
+            setup::present(application, session.clone(), existing);
         }
-        glib::ExitCode::SUCCESS
-    });
-    application.run_with_args(&["browser-picker", &url])
+    } else if !session.pending.borrow().is_empty() {
+        session.update_remaining();
+        if let Some(window) = session.picker_window.borrow().upgrade() {
+            window.present();
+        } else {
+            show_picker(application, session.clone());
+        }
+    }
+}
+
+fn show_request_error(application: &adw::Application, message: &str) {
+    let page = adw::StatusPage::builder()
+        .title(i18n::text("Open Target rejected"))
+        .description(message)
+        .build();
+    let window = adw::ApplicationWindow::builder()
+        .application(application)
+        .title(i18n::text("Browser Picker"))
+        .default_width(480)
+        .default_height(240)
+        .content(&page)
+        .build();
+    window.present();
+}
+
+fn present_activation(application: &adw::Application, session: &PickerSession) {
+    if let Some(window) = application.active_window() {
+        window.present();
+        return;
+    }
+    if !session.pending.borrow().is_empty() {
+        show_picker(application, session.clone());
+        return;
+    }
+    match configuration::load_optional() {
+        Ok(existing) => setup::present(application, session.clone(), existing),
+        Err(_) => show_configuration_window(application),
+    }
 }
 
 fn show_configuration_window(application: &adw::Application) {
@@ -123,7 +241,7 @@ fn show_configuration_window(application: &adw::Application) {
 }
 
 pub(crate) fn show_picker(application: &adw::Application, session: PickerSession) {
-    let destinations = Rc::clone(&session.destinations);
+    let destinations = Rc::new(session.destinations.borrow().clone());
     let pending = Rc::clone(&session.pending);
     let current = pending
         .borrow()
@@ -152,6 +270,15 @@ pub(crate) fn show_picker(application: &adw::Application, session: PickerSession
         .selectable(true)
         .build();
     content.append(&host_details);
+
+    let remaining = gtk::Label::builder()
+        .label(pending_count_text(pending.borrow().len()))
+        .xalign(0.0)
+        .build();
+    remaining.add_css_class("dim-label");
+    remaining.update_property(&[gtk::accessible::Property::Label("Pending Request count")]);
+    session.remaining.borrow().set(Some(&remaining));
+    content.append(&remaining);
 
     let reveal = gtk::CheckButton::with_label(&i18n::text("Reveal full URL details"));
     reveal.update_property(&[gtk::accessible::Property::Description(
@@ -242,13 +369,11 @@ pub(crate) fn show_picker(application: &adw::Application, session: PickerSession
             repair.connect_clicked(glib::clone!(
                 #[weak]
                 application,
+                #[strong]
+                session,
                 move |_| {
                     let existing = configuration::load_optional().ok().flatten();
-                    setup::present(
-                        &application,
-                        Rc::new(RefCell::new(VecDeque::new())),
-                        existing,
-                    );
+                    setup::present(&application, session.clone(), existing);
                 }
             ));
             row_box.append(&repair);
@@ -318,6 +443,7 @@ pub(crate) fn show_picker(application: &adw::Application, session: PickerSession
         .default_height(640)
         .content(&toolbar)
         .build();
+    session.picker_window.borrow().set(Some(&window));
     search.set_key_capture_widget(Some(&window));
 
     update_private_mode(&list, &private_mode, &destinations);
@@ -347,6 +473,8 @@ pub(crate) fn show_picker(application: &adw::Application, session: PickerSession
         search,
         #[weak]
         private_mode,
+        #[weak]
+        remaining,
         #[strong]
         pending,
         #[strong]
@@ -364,6 +492,7 @@ pub(crate) fn show_picker(application: &adw::Application, session: PickerSession
                     reveal: &reveal,
                     search: &search,
                     private_mode: &private_mode,
+                    remaining: &remaining,
                 },
                 &destinations[index],
                 &pending,
@@ -405,13 +534,11 @@ pub(crate) fn show_picker(application: &adw::Application, session: PickerSession
     configure.connect_clicked(glib::clone!(
         #[weak]
         application,
+        #[strong]
+        session,
         move |_| {
             let existing = configuration::load_optional().ok().flatten();
-            setup::present(
-                &application,
-                Rc::new(RefCell::new(VecDeque::new())),
-                existing,
-            );
+            setup::present(&application, session.clone(), existing);
         }
     ));
 
@@ -434,6 +561,8 @@ pub(crate) fn show_picker(application: &adw::Application, session: PickerSession
         search,
         #[weak]
         private_mode,
+        #[weak]
+        remaining,
         #[strong]
         pending,
         #[strong]
@@ -450,6 +579,7 @@ pub(crate) fn show_picker(application: &adw::Application, session: PickerSession
                     reveal: &reveal,
                     search: &search,
                     private_mode: &private_mode,
+                    remaining: &remaining,
                 },
                 &pending,
                 &destinations,
@@ -478,6 +608,15 @@ pub(crate) fn show_picker(application: &adw::Application, session: PickerSession
     ));
     window.add_action(&toggle_private);
     application.set_accels_for_action("win.toggle-private", &["<Ctrl><Shift>p"]);
+    let close = gio::SimpleAction::new("close", None);
+    close.connect_activate(glib::clone!(
+        #[weak]
+        window,
+        move |_, _| window.close()
+    ));
+    window.add_action(&close);
+    application.set_accels_for_action("win.close", &["<Ctrl>w"]);
+    let pending_on_close = Rc::clone(&pending);
 
     let keys = gtk::EventControllerKey::new();
     keys.set_propagation_phase(gtk::PropagationPhase::Capture);
@@ -490,6 +629,7 @@ pub(crate) fn show_picker(application: &adw::Application, session: PickerSession
     let reveal_weak = reveal.downgrade();
     let search_weak = search.downgrade();
     let private_mode_weak = private_mode.downgrade();
+    let remaining_weak = remaining.downgrade();
     keys.connect_key_pressed(move |_, key, _, modifiers| {
         let (
             Some(window),
@@ -501,6 +641,7 @@ pub(crate) fn show_picker(application: &adw::Application, session: PickerSession
             Some(reveal),
             Some(search),
             Some(private_mode),
+            Some(remaining),
         ) = (
             window_weak.upgrade(),
             list_weak.upgrade(),
@@ -511,6 +652,7 @@ pub(crate) fn show_picker(application: &adw::Application, session: PickerSession
             reveal_weak.upgrade(),
             search_weak.upgrade(),
             private_mode_weak.upgrade(),
+            remaining_weak.upgrade(),
         )
         else {
             return glib::Propagation::Proceed;
@@ -533,6 +675,7 @@ pub(crate) fn show_picker(application: &adw::Application, session: PickerSession
                         reveal: &reveal,
                         search: &search,
                         private_mode: &private_mode,
+                        remaining: &remaining,
                     },
                     &destinations[index],
                     &pending,
@@ -544,8 +687,21 @@ pub(crate) fn show_picker(application: &adw::Application, session: PickerSession
 
         match key {
             gdk::Key::Escape => {
-                pending.borrow_mut().clear();
-                window.close();
+                advance_pending_request(
+                    &PickerSurface {
+                        window: &window,
+                        list: &list,
+                        error: &error,
+                        host: &host,
+                        host_details: &host_details,
+                        full_target: &full_target,
+                        reveal: &reveal,
+                        search: &search,
+                        private_mode: &private_mode,
+                        remaining: &remaining,
+                    },
+                    &pending,
+                );
                 glib::Propagation::Stop
             }
             gdk::Key::Return | gdk::Key::KP_Enter => {
@@ -560,6 +716,7 @@ pub(crate) fn show_picker(application: &adw::Application, session: PickerSession
                         reveal: &reveal,
                         search: &search,
                         private_mode: &private_mode,
+                        remaining: &remaining,
                     },
                     &pending,
                     &destinations,
@@ -577,6 +734,10 @@ pub(crate) fn show_picker(application: &adw::Application, session: PickerSession
             _ => glib::Propagation::Proceed,
         }
     });
+    window.connect_close_request(move |_| {
+        pending_on_close.borrow_mut().clear();
+        glib::Propagation::Proceed
+    });
     window.add_controller(keys);
     window.present();
     search.grab_focus();
@@ -589,6 +750,17 @@ fn destination_search_text(destination: &BrowserDestination) -> String {
             destination.label, destination.application_label, profile
         ),
         None => format!("{} — {}", destination.label, destination.application_label),
+    }
+}
+
+fn pending_count_text(count: usize) -> String {
+    if count == 1 {
+        i18n::text("1 Pending Request")
+    } else {
+        i18n::text_with(
+            "{count} Pending Requests",
+            &[("{count}", &count.to_string())],
+        )
     }
 }
 
@@ -684,6 +856,33 @@ fn activate_selected(
     );
 }
 
+fn advance_pending_request(
+    surface: &PickerSurface<'_>,
+    pending: &Rc<RefCell<VecDeque<WebTarget>>>,
+) {
+    let next = {
+        let mut pending = pending.borrow_mut();
+        pending.pop_front();
+        surface
+            .remaining
+            .set_label(&pending_count_text(pending.len()));
+        pending.front().cloned()
+    };
+    if let Some(next) = next {
+        present_current_target(
+            surface.host,
+            surface.host_details,
+            surface.full_target,
+            surface.reveal,
+            surface.error,
+            surface.search,
+            &next,
+        );
+    } else {
+        surface.window.close();
+    }
+}
+
 fn launch_destination(
     surface: &PickerSurface<'_>,
     destination: &BrowserDestination,
@@ -703,22 +902,7 @@ fn launch_destination(
         return;
     }
     match launcher::dispatch(destination, &target, private) {
-        Ok(()) => {
-            pending.borrow_mut().pop_front();
-            if let Some(next) = pending.borrow().front().cloned() {
-                present_current_target(
-                    surface.host,
-                    surface.host_details,
-                    surface.full_target,
-                    surface.reveal,
-                    surface.error,
-                    surface.search,
-                    &next,
-                );
-            } else {
-                surface.window.close();
-            }
-        }
+        Ok(()) => advance_pending_request(surface, pending),
         Err(failure) => {
             let reason = match failure.reason {
                 launcher::FailureReason::NotFound => i18n::text("executable was not found"),

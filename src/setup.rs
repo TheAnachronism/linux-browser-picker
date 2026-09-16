@@ -1,5 +1,5 @@
 use std::cell::RefCell;
-use std::collections::{HashSet, VecDeque};
+use std::collections::HashSet;
 use std::rc::Rc;
 
 use adw::prelude::*;
@@ -13,7 +13,6 @@ use crate::configuration::{
 };
 use crate::discovery::{self, BrowserCandidate};
 use crate::i18n;
-use crate::open_target::WebTarget;
 
 #[derive(Clone)]
 struct EditorItem {
@@ -29,9 +28,10 @@ struct EditorItem {
 
 pub fn present(
     application: &adw::Application,
-    pending: Rc<RefCell<VecDeque<WebTarget>>>,
+    session: PickerSession,
     existing: Option<Configuration>,
 ) {
+    let pending = Rc::clone(&session.pending);
     if let Some(window) = application
         .windows()
         .into_iter()
@@ -254,9 +254,9 @@ pub fn present(
         #[strong]
         items,
         #[strong]
-        pending,
+        session,
         move |_| {
-            save_destinations(&application, &window, &fallback, &error, &items, &pending);
+            save_destinations(&application, &window, &fallback, &error, &items, &session);
         }
     ));
     let save_action = gio::SimpleAction::new("save-destinations", None);
@@ -272,9 +272,9 @@ pub fn present(
         #[strong]
         items,
         #[strong]
-        pending,
+        session,
         move |_, _| {
-            save_destinations(&application, &window, &fallback, &error, &items, &pending);
+            save_destinations(&application, &window, &fallback, &error, &items, &session);
         }
     ));
     window.add_action(&save_action);
@@ -289,7 +289,7 @@ pub fn present(
     let fallback_weak = fallback.downgrade();
     let error_weak = error.downgrade();
     let key_items = Rc::clone(&items);
-    let key_pending = Rc::clone(&pending);
+    let key_session = session.clone();
     keys.connect_key_pressed(move |_, key, _, modifiers| {
         let (Some(application), Some(window), Some(fallback), Some(error)) = (
             application_weak.upgrade(),
@@ -309,7 +309,7 @@ pub fn present(
                 &fallback,
                 &error,
                 &key_items,
-                &key_pending,
+                &key_session,
             );
             glib::Propagation::Stop
         } else {
@@ -333,20 +333,15 @@ fn save_destinations(
     fallback: &gtk::DropDown,
     error: &gtk::Label,
     items: &Rc<RefCell<Vec<EditorItem>>>,
-    pending: &Rc<RefCell<VecDeque<WebTarget>>>,
+    session: &PickerSession,
 ) {
     match collect_configuration(&items.borrow(), fallback) {
         Ok(configuration) => match configuration::save(&configuration) {
             Ok(()) => {
                 let saved = configuration::load().unwrap_or(configuration);
-                if pending.borrow().front().is_some() {
-                    application::show_picker(
-                        application,
-                        PickerSession {
-                            pending: Rc::clone(pending),
-                            destinations: Rc::new(saved.destinations),
-                        },
-                    );
+                if session.pending.borrow().front().is_some() {
+                    *session.destinations.borrow_mut() = saved.destinations;
+                    application::show_picker(application, session.clone());
                     window.close();
                 } else {
                     error.set_visible(false);

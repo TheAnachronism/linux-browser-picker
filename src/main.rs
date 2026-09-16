@@ -39,20 +39,22 @@ fn main() -> gtk::glib::ExitCode {
             );
             gtk::glib::ExitCode::FAILURE
         }
-        Some(argument) => match routing::route(argument) {
-            Ok(routing::Outcome::Dispatched) => gtk::glib::ExitCode::SUCCESS,
-            Ok(routing::Outcome::Pick {
-                target,
-                destinations,
-            }) => application::run_picker(target, destinations),
-            Ok(routing::Outcome::Setup { target }) => application::run_setup(target),
-            Err(error) => {
-                let (message, status) = routing_error_message(error);
-                eprintln!("{message}");
-                gtk::glib::ExitCode::from(status)
+        Some(argument)
+            if env::var_os("DBUS_SESSION_BUS_ADDRESS").is_none() && env::args_os().len() == 2 =>
+        {
+            match routing::route(argument) {
+                Ok(routing::Outcome::Dispatched) => gtk::glib::ExitCode::SUCCESS,
+                Ok(routing::Outcome::Pick { .. } | routing::Outcome::Setup { .. }) => {
+                    application::run()
+                }
+                Err(error) => {
+                    let (message, status) = routing_error_message(error);
+                    eprintln!("{message}");
+                    gtk::glib::ExitCode::from(status)
+                }
             }
-        },
-        None => application::run(),
+        }
+        Some(_) | None => application::run(),
     }
 }
 

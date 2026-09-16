@@ -245,3 +245,18 @@ msgid ""
 msgstr ""
 "Browser Destination '{label}' is unavailable: {reason}. Use Repair to "
 "configure another destination."
+
+msgid "One activation accepts at most 100 Open Targets"
+msgstr "One activation accepts at most 100 Open Targets"
+
+msgid "The Pending Request queue is full"
+msgstr "The Pending Request queue is full"
+
+msgid "Open Target rejected"
+msgstr "Open Target rejected"
+
+msgid "1 Pending Request"
+msgstr "1 Pending Request"
+
+msgid "{count} Pending Requests"
+msgstr "{count} Pending Requests"
