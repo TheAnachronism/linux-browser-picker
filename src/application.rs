@@ -1,7 +1,10 @@
+use std::cell::RefCell;
+use std::collections::VecDeque;
 use std::rc::Rc;
 
 use adw::prelude::*;
 use gtk::gdk;
+use gtk::gio;
 use gtk::glib;
 
 use crate::configuration::BrowserDestination;
@@ -11,6 +14,24 @@ use crate::open_target::WebTarget;
 
 pub const ID: &str = "io.github.TheAnachronism.BrowserPicker";
 
+#[derive(Clone)]
+struct PickerSession {
+    pending: Rc<RefCell<VecDeque<WebTarget>>>,
+    destinations: Rc<Vec<BrowserDestination>>,
+}
+
+struct PickerSurface<'a> {
+    window: &'a adw::ApplicationWindow,
+    list: &'a gtk::ListBox,
+    error: &'a gtk::Label,
+    host: &'a gtk::Label,
+    host_details: &'a gtk::Label,
+    full_target: &'a gtk::Label,
+    reveal: &'a gtk::CheckButton,
+    search: &'a gtk::SearchEntry,
+    private_mode: &'a gtk::CheckButton,
+}
+
 pub fn run() -> glib::ExitCode {
     let application = adw::Application::builder().application_id(ID).build();
     application.connect_activate(show_configuration);
@@ -18,17 +39,29 @@ pub fn run() -> glib::ExitCode {
 }
 
 pub fn run_picker(target: WebTarget, destinations: Vec<BrowserDestination>) -> glib::ExitCode {
-    let application = adw::Application::builder().application_id(ID).build();
-    let target = Rc::new(target);
-    let destinations = Rc::new(destinations);
-    application.connect_activate(move |application| {
-        if let Some(window) = application.active_window() {
-            window.present();
-            return;
+    let application = adw::Application::builder()
+        .application_id(ID)
+        .flags(gio::ApplicationFlags::HANDLES_COMMAND_LINE)
+        .build();
+    let url = target.as_str().to_owned();
+    let session = PickerSession {
+        pending: Rc::new(RefCell::new(VecDeque::new())),
+        destinations: Rc::new(destinations),
+    };
+    application.connect_command_line(move |application, command_line| {
+        for argument in command_line.arguments().iter().skip(1) {
+            if let Ok(open_target) = WebTarget::parse(argument) {
+                session.pending.borrow_mut().push_back(open_target);
+            }
         }
-        show_picker(application, Rc::clone(&target), Rc::clone(&destinations));
+        if application.active_window().is_none() && !session.pending.borrow().is_empty() {
+            show_picker(application, session.clone());
+        } else if let Some(window) = application.active_window() {
+            window.present();
+        }
+        glib::ExitCode::SUCCESS
     });
-    application.run_with_args(&["browser-picker"])
+    application.run_with_args(&["browser-picker", &url])
 }
 
 fn show_configuration(application: &adw::Application) {
@@ -60,11 +93,15 @@ fn show_configuration_window(application: &adw::Application) {
     window.present();
 }
 
-fn show_picker(
-    application: &adw::Application,
-    target: Rc<WebTarget>,
-    destinations: Rc<Vec<BrowserDestination>>,
-) {
+fn show_picker(application: &adw::Application, session: PickerSession) {
+    let destinations = Rc::clone(&session.destinations);
+    let pending = Rc::clone(&session.pending);
+    let current = pending
+        .borrow()
+        .front()
+        .cloned()
+        .expect("Picker requires a Pending Request");
+
     let content = gtk::Box::new(gtk::Orientation::Vertical, 12);
     content.set_margin_top(18);
     content.set_margin_bottom(18);
@@ -72,27 +109,16 @@ fn show_picker(
     content.set_margin_end(18);
 
     let host = gtk::Label::builder()
-        .label(target.unicode_host())
+        .label(current.unicode_host())
         .xalign(0.0)
         .selectable(true)
         .build();
     host.add_css_class("title-1");
-    host.update_property(&[gtk::accessible::Property::Label("Open Target host")]);
+    host.update_property(&[gtk::accessible::Property::Description("Open Target host")]);
     content.append(&host);
 
-    let host_forms = if target.unicode_host() == target.ascii_host() {
-        i18n::text_with("Host: {host}", &[("{host}", target.ascii_host())])
-    } else {
-        i18n::text_with(
-            "Unicode host: {unicode}\nASCII host: {ascii}",
-            &[
-                ("{unicode}", target.unicode_host()),
-                ("{ascii}", target.ascii_host()),
-            ],
-        )
-    };
     let host_details = gtk::Label::builder()
-        .label(&host_forms)
+        .label(host_forms(&current))
         .xalign(0.0)
         .selectable(true)
         .build();
@@ -104,13 +130,15 @@ fn show_picker(
     )]);
     content.append(&reveal);
     let full_target = gtk::Label::builder()
-        .label(target.as_str())
+        .label(current.as_str())
         .xalign(0.0)
         .wrap(true)
         .selectable(true)
         .visible(false)
         .build();
-    full_target.update_property(&[gtk::accessible::Property::Label("Full Open Target details")]);
+    full_target.update_property(&[gtk::accessible::Property::Description(
+        "Full Open Target details",
+    )]);
     content.append(&full_target);
     reveal.connect_toggled(glib::clone!(
         #[weak]
@@ -133,7 +161,7 @@ fn show_picker(
         .build();
     error.set_focusable(true);
     error.add_css_class("error");
-    error.update_property(&[gtk::accessible::Property::Label("Launch error")]);
+    error.update_property(&[gtk::accessible::Property::Description("Launch error")]);
     content.append(&error);
 
     let list = gtk::ListBox::new();
@@ -163,16 +191,19 @@ fn show_picker(
             .activatable(true)
             .selectable(true)
             .build();
-        let shortcut = if index < 9 {
-            format!("Alt+{}", index + 1)
+        if index < 9 {
+            let shortcut = format!("<Alt>{}", index + 1);
+            row.update_property(&[
+                gtk::accessible::Property::Label(&destination.label),
+                gtk::accessible::Property::Description(&labels),
+                gtk::accessible::Property::KeyShortcuts(&shortcut),
+            ]);
         } else {
-            String::new()
-        };
-        row.update_property(&[
-            gtk::accessible::Property::Label(&destination.label),
-            gtk::accessible::Property::Description(&labels),
-            gtk::accessible::Property::KeyShortcuts(&shortcut),
-        ]);
+            row.update_property(&[
+                gtk::accessible::Property::Label(&destination.label),
+                gtk::accessible::Property::Description(&labels),
+            ]);
+        }
         list.append(&row);
         rows.push(row);
     }
@@ -192,7 +223,7 @@ fn show_picker(
         gtk::CheckButton::with_label(&i18n::text("Private Launch Mode (Ctrl+Shift+P)"));
     private_mode.update_property(&[
         gtk::accessible::Property::Label("Private Launch Mode"),
-        gtk::accessible::Property::KeyShortcuts("Ctrl+Shift+P"),
+        gtk::accessible::Property::KeyShortcuts("<Control><Shift>p"),
     ]);
     content.append(&private_mode);
 
@@ -235,18 +266,39 @@ fn show_picker(
         #[weak]
         error,
         #[weak]
+        list,
+        #[weak]
+        host,
+        #[weak]
+        host_details,
+        #[weak]
+        full_target,
+        #[weak]
+        reveal,
+        #[weak]
+        search,
+        #[weak]
         private_mode,
         #[strong]
-        target,
+        pending,
         #[strong]
         destinations,
         move |_, row| {
             let index = row.index() as usize;
             launch_destination(
-                &window,
-                &error,
+                &PickerSurface {
+                    window: &window,
+                    list: &list,
+                    error: &error,
+                    host: &host,
+                    host_details: &host_details,
+                    full_target: &full_target,
+                    reveal: &reveal,
+                    search: &search,
+                    private_mode: &private_mode,
+                },
                 &destinations[index],
-                &target,
+                &pending,
                 private_mode.is_active(),
             );
         }
@@ -296,26 +348,41 @@ fn show_picker(
         #[weak]
         error,
         #[weak]
+        host,
+        #[weak]
+        host_details,
+        #[weak]
+        full_target,
+        #[weak]
+        reveal,
+        #[weak]
+        search,
+        #[weak]
         private_mode,
         #[strong]
-        target,
+        pending,
         #[strong]
         destinations,
         move |_| {
-            if let Some(row) = list.selected_row() {
-                let index = row.index() as usize;
-                launch_destination(
-                    &window,
-                    &error,
-                    &destinations[index],
-                    &target,
-                    private_mode.is_active(),
-                );
-            }
+            activate_selected(
+                &PickerSurface {
+                    window: &window,
+                    list: &list,
+                    error: &error,
+                    host: &host,
+                    host_details: &host_details,
+                    full_target: &full_target,
+                    reveal: &reveal,
+                    search: &search,
+                    private_mode: &private_mode,
+                },
+                &pending,
+                &destinations,
+            );
         }
     ));
 
-    let toggle_private = gtk::gio::SimpleAction::new("toggle-private", None);
+    let toggle_private = gio::SimpleAction::new("toggle-private", None);
     toggle_private.connect_activate(glib::clone!(
         #[weak]
         list,
@@ -342,14 +409,35 @@ fn show_picker(
     let window_weak = window.downgrade();
     let list_weak = list.downgrade();
     let error_weak = error.downgrade();
+    let host_weak = host.downgrade();
+    let host_details_weak = host_details.downgrade();
+    let full_target_weak = full_target.downgrade();
+    let reveal_weak = reveal.downgrade();
+    let search_weak = search.downgrade();
     let private_mode_weak = private_mode.downgrade();
     keys.connect_key_pressed(move |_, key, _, modifiers| {
-        let (Some(window), Some(list), Some(error), Some(private_mode)) = (
+        let (
+            Some(window),
+            Some(list),
+            Some(error),
+            Some(host),
+            Some(host_details),
+            Some(full_target),
+            Some(reveal),
+            Some(search),
+            Some(private_mode),
+        ) = (
             window_weak.upgrade(),
             list_weak.upgrade(),
             error_weak.upgrade(),
+            host_weak.upgrade(),
+            host_details_weak.upgrade(),
+            full_target_weak.upgrade(),
+            reveal_weak.upgrade(),
+            search_weak.upgrade(),
             private_mode_weak.upgrade(),
-        ) else {
+        )
+        else {
             return glib::Propagation::Proceed;
         };
         if modifiers.contains(gdk::ModifierType::ALT_MASK)
@@ -360,10 +448,19 @@ fn show_picker(
             if let Some(row) = rows.get(index).filter(|row| row.is_visible()) {
                 list.select_row(Some(row));
                 launch_destination(
-                    &window,
-                    &error,
+                    &PickerSurface {
+                        window: &window,
+                        list: &list,
+                        error: &error,
+                        host: &host,
+                        host_details: &host_details,
+                        full_target: &full_target,
+                        reveal: &reveal,
+                        search: &search,
+                        private_mode: &private_mode,
+                    },
                     &destinations[index],
-                    &target,
+                    &pending,
                     private_mode.is_active(),
                 );
             }
@@ -372,20 +469,26 @@ fn show_picker(
 
         match key {
             gdk::Key::Escape => {
+                pending.borrow_mut().clear();
                 window.close();
                 glib::Propagation::Stop
             }
             gdk::Key::Return | gdk::Key::KP_Enter => {
-                if let Some(row) = list.selected_row() {
-                    let index = row.index() as usize;
-                    launch_destination(
-                        &window,
-                        &error,
-                        &destinations[index],
-                        &target,
-                        private_mode.is_active(),
-                    );
-                }
+                activate_selected(
+                    &PickerSurface {
+                        window: &window,
+                        list: &list,
+                        error: &error,
+                        host: &host,
+                        host_details: &host_details,
+                        full_target: &full_target,
+                        reveal: &reveal,
+                        search: &search,
+                        private_mode: &private_mode,
+                    },
+                    &pending,
+                    &destinations,
+                );
                 glib::Propagation::Stop
             }
             gdk::Key::Up => {
@@ -412,6 +515,38 @@ fn destination_search_text(destination: &BrowserDestination) -> String {
         ),
         None => format!("{} — {}", destination.label, destination.application_label),
     }
+}
+
+fn host_forms(target: &WebTarget) -> String {
+    if target.unicode_host() == target.ascii_host() {
+        i18n::text_with("Host: {host}", &[("{host}", target.ascii_host())])
+    } else {
+        i18n::text_with(
+            "Unicode host: {unicode}\nASCII host: {ascii}",
+            &[
+                ("{unicode}", target.unicode_host()),
+                ("{ascii}", target.ascii_host()),
+            ],
+        )
+    }
+}
+
+fn present_current_target(
+    host: &gtk::Label,
+    host_details: &gtk::Label,
+    full_target: &gtk::Label,
+    reveal: &gtk::CheckButton,
+    error: &gtk::Label,
+    search: &gtk::SearchEntry,
+    target: &WebTarget,
+) {
+    host.set_label(target.unicode_host());
+    host_details.set_label(&host_forms(target));
+    full_target.set_label(target.as_str());
+    reveal.set_active(false);
+    error.set_visible(false);
+    error.set_label("");
+    search.set_text("");
 }
 
 fn update_private_mode(
@@ -455,15 +590,51 @@ fn select_relative(list: &gtk::ListBox, rows: &[gtk::ListBoxRow], direction: isi
     }
 }
 
+fn activate_selected(
+    surface: &PickerSurface<'_>,
+    pending: &Rc<RefCell<VecDeque<WebTarget>>>,
+    destinations: &[BrowserDestination],
+) {
+    let Some(row) = surface.list.selected_row() else {
+        return;
+    };
+    let Some(destination) = destinations.get(row.index() as usize) else {
+        return;
+    };
+    launch_destination(
+        surface,
+        destination,
+        pending,
+        surface.private_mode.is_active(),
+    );
+}
+
 fn launch_destination(
-    window: &adw::ApplicationWindow,
-    error: &gtk::Label,
+    surface: &PickerSurface<'_>,
     destination: &BrowserDestination,
-    target: &WebTarget,
+    pending: &Rc<RefCell<VecDeque<WebTarget>>>,
     private: bool,
 ) {
-    match launcher::dispatch(destination, target, private) {
-        Ok(()) => window.close(),
+    let Some(target) = pending.borrow().front().cloned() else {
+        return;
+    };
+    match launcher::dispatch(destination, &target, private) {
+        Ok(()) => {
+            pending.borrow_mut().pop_front();
+            if let Some(next) = pending.borrow().front().cloned() {
+                present_current_target(
+                    surface.host,
+                    surface.host_details,
+                    surface.full_target,
+                    surface.reveal,
+                    surface.error,
+                    surface.search,
+                    &next,
+                );
+            } else {
+                surface.window.close();
+            }
+        }
         Err(failure) => {
             let reason = match failure.reason {
                 launcher::FailureReason::NotFound => i18n::text("executable was not found"),
@@ -472,12 +643,12 @@ fn launch_destination(
                 }
                 launcher::FailureReason::Other => i18n::text("process could not be started"),
             };
-            error.set_label(&i18n::text_with(
+            surface.error.set_label(&i18n::text_with(
                 "Browser Destination '{label}' could not accept dispatch: {reason}. Choose it again to retry, or choose another destination.",
                 &[("{label}", &destination.label), ("{reason}", &reason)],
             ));
-            error.set_visible(true);
-            error.grab_focus();
+            surface.error.set_visible(true);
+            surface.error.grab_focus();
         }
     }
 }

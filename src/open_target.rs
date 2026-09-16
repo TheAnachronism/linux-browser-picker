@@ -9,6 +9,7 @@ pub enum Error {
     UnsupportedScheme,
 }
 
+#[derive(Clone, Debug)]
 pub struct WebTarget {
     original: String,
     ascii_host: String,
