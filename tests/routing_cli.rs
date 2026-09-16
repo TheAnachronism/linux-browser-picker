@@ -765,18 +765,20 @@ fn preselection_does_not_dispatch_automatically() {
         ),
     );
     let received = config_home.path().join("received-argv");
-    let mut child = browser_picker(&config_home)
+    let output = browser_picker(&config_home)
         .env("BROWSER_PICKER_TEST_OUTPUT", &received)
         .arg("https://suggested.example/path")
-        .spawn()
+        .output()
         .expect("Browser Picker should start");
-    thread::sleep(Duration::from_millis(300));
+    assert_eq!(output.status.code(), Some(5));
+    assert_eq!(
+        String::from_utf8(output.stderr).expect("error output should be UTF-8"),
+        "Picker, configuration, and shared queue operations require a user session D-Bus\n"
+    );
     assert!(
         received.exists() == false,
         "Preselection must queue instead of dispatching"
     );
-    let _ = child.kill();
-    let _ = child.wait();
 }
 
 #[test]
@@ -1014,18 +1016,16 @@ fn negated_regex_in_or_group_can_preselect_without_dispatch() {
         ),
     );
     let received = config_home.path().join("received-argv");
-    let mut child = browser_picker(&config_home)
+    let output = browser_picker(&config_home)
         .env("BROWSER_PICKER_TEST_OUTPUT", &received)
         .arg("https://news.example/story")
-        .spawn()
+        .output()
         .expect("Browser Picker should start");
-    thread::sleep(Duration::from_millis(300));
+    assert_eq!(output.status.code(), Some(5));
     assert!(
         received.exists() == false,
         "Preselection must queue instead of dispatching"
     );
-    let _ = child.kill();
-    let _ = child.wait();
 }
 
 #[test]
@@ -1174,18 +1174,20 @@ fn write_html_file(directory: &std::path::Path, name: &str) -> std::path::PathBu
 
 fn assert_queued_without_dispatch(config_home: &TempDir, argument: &std::ffi::OsStr) {
     let received = config_home.path().join("received-argv");
-    let mut child = browser_picker(config_home)
+    let output = browser_picker(config_home)
         .env("BROWSER_PICKER_TEST_OUTPUT", &received)
         .arg(argument)
-        .spawn()
+        .output()
         .expect("Browser Picker should start");
-    thread::sleep(Duration::from_millis(300));
+    assert_eq!(output.status.code(), Some(5));
+    assert_eq!(
+        String::from_utf8(output.stderr).expect("error output should be UTF-8"),
+        "Picker, configuration, and shared queue operations require a user session D-Bus\n"
+    );
     assert!(
         received.exists() == false,
         "local files must not dispatch automatically"
     );
-    let _ = child.kill();
-    let _ = child.wait();
 }
 
 #[test]

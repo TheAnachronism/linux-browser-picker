@@ -15,6 +15,46 @@ pub enum Error {
     NoGraphicalSession,
 }
 
+struct Diagnostic {
+    kind: &'static str,
+    result: &'static str,
+    rule_id: Option<String>,
+    destination_id: Option<String>,
+    mode: Option<LaunchMode>,
+    private: Option<&'static str>,
+    availability: Option<&'static str>,
+}
+
+impl Diagnostic {
+    fn render(&self) -> String {
+        let mut lines = vec![
+            format!("kind={}", self.kind),
+            format!("result={}", self.result),
+        ];
+        if let Some(rule_id) = &self.rule_id {
+            lines.push(format!("rule={rule_id}"));
+        }
+        if let Some(destination_id) = &self.destination_id {
+            lines.push(format!("destination={destination_id}"));
+        }
+        if let Some(mode) = self.mode {
+            let mode = match mode {
+                LaunchMode::Normal => "normal",
+                LaunchMode::Private => "private",
+            };
+            lines.push(format!("mode={mode}"));
+        }
+        if let Some(private) = self.private {
+            lines.push(format!("private={private}"));
+        }
+        if let Some(availability) = self.availability {
+            lines.push(format!("availability={availability}"));
+        }
+        lines.push(String::new());
+        lines.join("\n")
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Preselection {
     pub destination_id: String,
@@ -97,6 +137,133 @@ pub fn route(argument: &OsStr) -> Result<Outcome, Error> {
                 to: preview.to,
             },
         )),
+    }
+}
+
+pub fn diagnose(argument: &OsStr) -> Result<String, Error> {
+    let target = OpenTarget::parse(argument).map_err(Error::InvalidTarget)?;
+    match configuration::inspect().map_err(Error::Configuration)? {
+        Inspected::Missing => Ok(diagnostic(kind_of(&target), "setup", None, None, None)),
+        Inspected::Invalid(error) => Err(Error::Configuration(error)),
+        Inspected::Migratable { .. } => {
+            Ok(diagnostic(kind_of(&target), "migrate", None, None, None))
+        }
+        Inspected::Ready(configuration) => Ok(diagnose_configured(configuration, target).render()),
+    }
+}
+
+fn diagnostic(
+    kind: &'static str,
+    result: &'static str,
+    rule_id: Option<String>,
+    destination_id: Option<String>,
+    mode: Option<LaunchMode>,
+) -> String {
+    Diagnostic {
+        kind,
+        result,
+        rule_id,
+        destination_id,
+        mode,
+        private: None,
+        availability: None,
+    }
+    .render()
+}
+
+fn kind_of(target: &OpenTarget) -> &'static str {
+    match target {
+        OpenTarget::Web(_) => "web",
+        OpenTarget::File(_) => "file",
+    }
+}
+
+fn destination_capability(
+    destinations: &[BrowserDestination],
+    destination_id: &str,
+) -> (Option<&'static str>, Option<&'static str>) {
+    let Some(destination) = destinations
+        .iter()
+        .find(|destination| destination.id == destination_id)
+    else {
+        return (None, None);
+    };
+    (
+        Some(if destination.supports_private() {
+            "available"
+        } else {
+            "unavailable"
+        }),
+        Some(if destination.is_available() {
+            "available"
+        } else {
+            "unavailable"
+        }),
+    )
+}
+
+fn diagnose_configured(configuration: Configuration, target: OpenTarget) -> Diagnostic {
+    if matches!(target, OpenTarget::File(_)) {
+        return Diagnostic {
+            kind: "file",
+            result: "picker",
+            rule_id: None,
+            destination_id: None,
+            mode: None,
+            private: None,
+            availability: None,
+        };
+    }
+    let OpenTarget::Web(web) = &target else {
+        unreachable!("file Open Targets already returned");
+    };
+    if let Some(rule) = first_matching_rule(&configuration.rules, web) {
+        let (destination_id, mode, automatic) = match &rule.action {
+            RoutingAction::Open { destination, mode } => (destination.clone(), *mode, true),
+            RoutingAction::Preselect { destination, mode } => (destination.clone(), *mode, false),
+        };
+        let (private, availability) =
+            destination_capability(&configuration.destinations, &destination_id);
+        return Diagnostic {
+            kind: "web",
+            result: if automatic {
+                "dispatched"
+            } else {
+                "preselection"
+            },
+            rule_id: Some(rule.id.clone()),
+            destination_id: Some(destination_id),
+            mode: Some(mode),
+            private,
+            availability,
+        };
+    }
+    match configuration.fallback {
+        FallbackAction::Open {
+            destination: destination_id,
+            mode,
+        } => {
+            let (private, availability) =
+                destination_capability(&configuration.destinations, &destination_id);
+            Diagnostic {
+                kind: "web",
+                result: "dispatched",
+                rule_id: None,
+                destination_id: Some(destination_id),
+                mode: Some(mode),
+                private,
+                availability,
+            }
+        }
+        FallbackAction::ShowPicker => Diagnostic {
+            kind: "web",
+            result: "picker",
+            rule_id: None,
+            destination_id: None,
+            mode: None,
+            private: None,
+            availability: None,
+        },
     }
 }
 

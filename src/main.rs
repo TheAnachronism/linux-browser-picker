@@ -10,24 +10,60 @@ mod routing;
 mod routing_editor;
 mod setup;
 mod url_pattern;
+mod window_state;
 
 use std::env;
+use std::ffi::OsStr;
 
-const HELP: &str = "Browser Picker\nChoose where links and local files open.\n\nUsage:\n  browser-picker\n  browser-picker <http(s)-url|file>\n  browser-picker --help\n  browser-picker --version\n\nOptions:\n  -h, --help       Show this help\n  -V, --version    Show version\n";
+const HELP: &str = "\
+Browser Picker
+Choose where links and local files open.
+
+Usage:
+  browser-picker
+  browser-picker <http(s)-url|file>...
+  browser-picker config
+  browser-picker validate
+  browser-picker diagnose <http(s)-url|file>
+  browser-picker help
+  browser-picker version
+
+Operations:
+  config      Open configuration
+  validate    Validate configuration
+  diagnose    Print redacted routing diagnostics
+  help        Show this help
+  version     Show version
+
+Options:
+  -h, --help       Show this help
+  -V, --version    Show version
+
+Exit statuses:
+  0  success
+  1  unknown argument
+  2  invalid Open Target
+  3  invalid configuration
+  4  dispatch failure
+  5  environment
+  6  queue overflow
+  7  forwarding failure
+";
 const STATUS_INVALID_TARGET: u8 = 2;
 const STATUS_CONFIGURATION: u8 = 3;
 const STATUS_LAUNCH: u8 = 4;
 const STATUS_ENVIRONMENT: u8 = 5;
+const STATUS_FORWARDING: u8 = 7;
 
 fn main() -> gtk::glib::ExitCode {
     i18n::initialize();
 
     match env::args_os().nth(1).as_deref() {
-        Some(argument) if matches!(argument.to_str(), Some("-h" | "--help")) => {
+        Some(argument) if matches!(argument.to_str(), Some("-h" | "--help" | "help")) => {
             print!("{}", i18n::text(HELP));
             gtk::glib::ExitCode::SUCCESS
         }
-        Some(argument) if matches!(argument.to_str(), Some("-V" | "--version")) => {
+        Some(argument) if matches!(argument.to_str(), Some("-V" | "--version" | "version")) => {
             println!(
                 "{} {}",
                 i18n::text("Browser Picker"),
@@ -35,6 +71,14 @@ fn main() -> gtk::glib::ExitCode {
             );
             gtk::glib::ExitCode::SUCCESS
         }
+        Some(argument) if matches!(argument.to_str(), Some("validate" | "--validate")) => {
+            validate_configuration()
+        }
+        Some(argument) if matches!(argument.to_str(), Some("diagnose" | "--diagnose")) => {
+            diagnose_target()
+        }
+        Some(argument) if is_config_operation(argument.to_str()) => open_configuration(),
+        None => open_configuration(),
         Some(argument) if argument.to_string_lossy().starts_with('-') => {
             eprintln!(
                 "{}: {}",
@@ -43,25 +87,111 @@ fn main() -> gtk::glib::ExitCode {
             );
             gtk::glib::ExitCode::FAILURE
         }
-        Some(argument)
-            if env::var_os("DBUS_SESSION_BUS_ADDRESS").is_none() && env::args_os().len() == 2 =>
-        {
-            match routing::route(argument) {
-                Ok(routing::Outcome::Dispatched) => gtk::glib::ExitCode::SUCCESS,
-                Ok(
-                    routing::Outcome::Pick { .. }
-                    | routing::Outcome::Setup { .. }
-                    | routing::Outcome::Recover { .. }
-                    | routing::Outcome::Migrate { .. },
-                ) => application::run(),
-                Err(error) => {
-                    let (message, status) = routing_error_message(error);
-                    eprintln!("{message}");
-                    gtk::glib::ExitCode::from(status)
-                }
+        Some(_) => route_arguments(),
+    }
+}
+
+fn has_graphical_session() -> bool {
+    env::var_os("DISPLAY").is_some() || env::var_os("WAYLAND_DISPLAY").is_some()
+}
+
+fn has_session_bus() -> bool {
+    env::var_os("DBUS_SESSION_BUS_ADDRESS").is_some()
+}
+
+pub(crate) fn is_config_operation(argument: Option<&str>) -> bool {
+    matches!(argument, Some("config" | "--config"))
+}
+
+fn environment_failure(message: &str) -> gtk::glib::ExitCode {
+    eprintln!("{}", i18n::text(message));
+    gtk::glib::ExitCode::from(STATUS_ENVIRONMENT)
+}
+
+fn open_configuration() -> gtk::glib::ExitCode {
+    if !has_graphical_session() {
+        return environment_failure("Opening configuration requires a graphical session");
+    }
+    if !has_session_bus() {
+        return environment_failure(
+            "Picker, configuration, and shared queue operations require a user session D-Bus",
+        );
+    }
+    application::run()
+}
+
+fn diagnose_target() -> gtk::glib::ExitCode {
+    let Some(argument) = env::args_os().nth(2) else {
+        eprintln!("{}", i18n::text("diagnose requires an Open Target"));
+        return gtk::glib::ExitCode::FAILURE;
+    };
+    match routing::diagnose(&argument) {
+        Ok(report) => {
+            print!("{report}");
+            gtk::glib::ExitCode::SUCCESS
+        }
+        Err(error) => {
+            let (message, status) = routing_error_message(error);
+            eprintln!("{message}");
+            gtk::glib::ExitCode::from(status)
+        }
+    }
+}
+
+fn validate_configuration() -> gtk::glib::ExitCode {
+    let error = match configuration::inspect() {
+        Ok(configuration::Inspected::Ready(_)) => return gtk::glib::ExitCode::SUCCESS,
+        Ok(configuration::Inspected::Missing) => {
+            configuration::Error::Read(std::io::ErrorKind::NotFound)
+        }
+        Ok(configuration::Inspected::Invalid(error)) => error,
+        Ok(configuration::Inspected::Migratable { preview, .. }) => {
+            configuration::Error::MigrationRequired {
+                from: preview.from,
+                to: preview.to,
             }
         }
-        Some(_) | None => application::run(),
+        Err(error) => error,
+    };
+    eprintln!("{}", configuration_error_message(error));
+    gtk::glib::ExitCode::from(STATUS_CONFIGURATION)
+}
+
+fn route_arguments() -> gtk::glib::ExitCode {
+    if !has_graphical_session() {
+        return environment_failure("Routing an Open Target requires a graphical session");
+    }
+    if has_session_bus() {
+        return application::run();
+    }
+    let mut arguments = env::args_os().skip(1);
+    let Some(argument) = arguments.next() else {
+        return open_configuration();
+    };
+    if arguments.next().is_some() {
+        return environment_failure(
+            "Picker, configuration, and shared queue operations require a user session D-Bus",
+        );
+    }
+    route_one_shot(&argument)
+}
+
+fn route_one_shot(argument: &OsStr) -> gtk::glib::ExitCode {
+    match routing::route(argument) {
+        Ok(routing::Outcome::Dispatched) => gtk::glib::ExitCode::SUCCESS,
+        Ok(
+            routing::Outcome::Pick { .. }
+            | routing::Outcome::Setup { .. }
+            | routing::Outcome::Recover { .. }
+            | routing::Outcome::Migrate { .. },
+        ) => environment_failure(
+            "Picker, configuration, and shared queue operations require a user session D-Bus",
+        ),
+        Err(error) => {
+            let (message, status) = routing_error_message(error);
+            eprintln!("{message}");
+            gtk::glib::ExitCode::from(status)
+        }
     }
 }
 

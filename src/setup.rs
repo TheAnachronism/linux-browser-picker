@@ -277,6 +277,7 @@ pub fn present(application: &adw::Application, session: PickerSession, store: Co
         .default_height(720)
         .content(&toolbar)
         .build();
+    application::apply_window_state(&window, "setup");
     window.set_widget_name("destination-setup");
     let store = Rc::new(RefCell::new(store));
     let allow_close = Rc::new(Cell::new(false));

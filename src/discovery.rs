@@ -147,9 +147,7 @@ pub(crate) fn is_picker_desktop_id(desktop_id: &str) -> bool {
 }
 
 pub(crate) fn is_browser_picker(application: &gio::AppInfo) -> bool {
-    application
-        .id()
-        .is_some_and(|id| is_picker_desktop_id(&id))
+    application.id().is_some_and(|id| is_picker_desktop_id(&id))
         || application
             .executable()
             .file_name()

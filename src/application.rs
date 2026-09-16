@@ -1,6 +1,5 @@
 use std::cell::RefCell;
 use std::collections::VecDeque;
-use std::env;
 use std::ffi::OsStr;
 use std::rc::Rc;
 
@@ -110,14 +109,9 @@ struct PickerSurface<'a> {
 }
 
 pub fn run() -> glib::ExitCode {
-    let mut flags =
-        gio::ApplicationFlags::HANDLES_COMMAND_LINE | gio::ApplicationFlags::HANDLES_OPEN;
-    if env::var_os("DBUS_SESSION_BUS_ADDRESS").is_none() {
-        flags |= gio::ApplicationFlags::NON_UNIQUE;
-    }
     let application = adw::Application::builder()
         .application_id(ID)
-        .flags(flags)
+        .flags(gio::ApplicationFlags::HANDLES_COMMAND_LINE | gio::ApplicationFlags::HANDLES_OPEN)
         .build();
     let session = PickerSession::new();
 
@@ -132,7 +126,9 @@ pub fn run() -> glib::ExitCode {
         move |application, command_line| {
             let arguments = command_line.arguments();
             let arguments = &arguments[1..];
-            if arguments.is_empty() {
+            if arguments.is_empty()
+                || (arguments.len() == 1 && crate::is_config_operation(arguments[0].to_str()))
+            {
                 present_activation(application, &session);
                 return glib::ExitCode::SUCCESS;
             }
@@ -188,7 +184,29 @@ pub fn run() -> glib::ExitCode {
             }
         }
     ));
+    if gio::bus_get_sync(gio::BusType::Session, gio::Cancellable::NONE).is_err() {
+        eprintln!(
+            "{}",
+            i18n::text("Could not forward to the Browser Picker session on D-Bus")
+        );
+        return glib::ExitCode::from(crate::STATUS_FORWARDING);
+    }
     application.run()
+}
+
+pub(crate) fn apply_window_state(window: &adw::ApplicationWindow, name: &'static str) {
+    if let Some((width, height)) = crate::window_state::load(name) {
+        window.set_default_size(width, height);
+    }
+    window.connect_close_request(move |window| {
+        let width = window.width();
+        let height = window.height();
+        let (default_width, default_height) = window.default_size();
+        let width = if width > 0 { width } else { default_width };
+        let height = if height > 0 { height } else { default_height };
+        crate::window_state::save(name, width, height);
+        glib::Propagation::Proceed
+    });
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -448,6 +466,7 @@ fn present_migration(application: &adw::Application, session: &PickerSession) {
         .default_height(320)
         .content(&toolbar)
         .build();
+    apply_window_state(&window, "migration");
     window.set_widget_name("configuration-migration");
 
     cancel.connect_clicked(glib::clone!(
@@ -568,6 +587,7 @@ fn show_configuration_window(application: &adw::Application) {
         .default_height(480)
         .content(&toolbar)
         .build();
+    apply_window_state(&window, "configuration");
     window.present();
 }
 
@@ -818,6 +838,7 @@ pub(crate) fn show_picker(application: &adw::Application, session: PickerSession
         .default_height(640)
         .content(&toolbar)
         .build();
+    apply_window_state(&window, "picker");
     session.picker_window.borrow().set(Some(&window));
     search.set_key_capture_widget(Some(&window));
 

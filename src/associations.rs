@@ -3,7 +3,7 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::discovery::{self, HTTPS, HTTP};
+use crate::discovery::{self, HTTP, HTTPS};
 use crate::i18n;
 
 pub const HTML: &str = "text/html";
@@ -102,7 +102,9 @@ fn handler_for(
         return DefaultHandler::Unset;
     }
     match defaults.get(mime).map(String::as_str) {
-        Some(desktop_id) if discovery::is_picker_desktop_id(desktop_id) => DefaultHandler::BrowserPicker,
+        Some(desktop_id) if discovery::is_picker_desktop_id(desktop_id) => {
+            DefaultHandler::BrowserPicker
+        }
         Some(desktop_id) => DefaultHandler::Other {
             name: display_name(desktop_id, data_directories),
         },
@@ -155,7 +157,10 @@ fn read_mimeapps(path: &Path) -> (HashMap<String, String>, HashMap<String, Strin
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        if let Some(name) = line.strip_prefix('[').and_then(|line| line.strip_suffix(']')) {
+        if let Some(name) = line
+            .strip_prefix('[')
+            .and_then(|line| line.strip_suffix(']'))
+        {
             section = name;
             continue;
         }
