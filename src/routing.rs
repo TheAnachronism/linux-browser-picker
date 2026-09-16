@@ -1,9 +1,10 @@
 use std::ffi::OsStr;
 
 use crate::configuration::{
-    self, BrowserDestination, Configuration, FallbackAction, LaunchMode, PathComparison,
-    RoutingAction, RoutingRule, UrlCondition,
+    self, BrowserDestination, Configuration, DestinationLaunch, FallbackAction, Inspected,
+    LaunchMode, MigrationPreview, PathComparison, RoutingAction, RoutingRule, UrlCondition,
 };
+use crate::discovery;
 use crate::launcher;
 use crate::open_target::{self, OpenTarget, WebTarget};
 
@@ -29,6 +30,15 @@ pub enum Outcome {
     },
     Setup {
         target: OpenTarget,
+    },
+    Recover {
+        target: OpenTarget,
+        error: configuration::Error,
+        destinations: Vec<BrowserDestination>,
+    },
+    Migrate {
+        target: OpenTarget,
+        preview: MigrationPreview,
     },
 }
 
@@ -68,9 +78,29 @@ pub fn route(argument: &OsStr) -> Result<Outcome, Error> {
     }
 
     let target = OpenTarget::parse(argument).map_err(Error::InvalidTarget)?;
-    let Some(configuration) = configuration::load_optional().map_err(Error::Configuration)? else {
-        return Ok(Outcome::Setup { target });
-    };
+    let interactive = std::env::var_os("DBUS_SESSION_BUS_ADDRESS").is_some();
+    match configuration::inspect().map_err(Error::Configuration)? {
+        Inspected::Missing => Ok(Outcome::Setup { target }),
+        Inspected::Ready(configuration) => route_configured(configuration, target),
+        Inspected::Invalid(error) if interactive => Ok(Outcome::Recover {
+            target,
+            error,
+            destinations: discovered_destinations(),
+        }),
+        Inspected::Invalid(error) => Err(Error::Configuration(error)),
+        Inspected::Migratable { preview, .. } if interactive => {
+            Ok(Outcome::Migrate { target, preview })
+        }
+        Inspected::Migratable { preview, .. } => Err(Error::Configuration(
+            configuration::Error::MigrationRequired {
+                from: preview.from,
+                to: preview.to,
+            },
+        )),
+    }
+}
+
+fn route_configured(configuration: Configuration, target: OpenTarget) -> Result<Outcome, Error> {
     if matches!(target, OpenTarget::File(_)) {
         return Ok(Outcome::Pick {
             target,
@@ -84,6 +114,31 @@ pub fn route(argument: &OsStr) -> Result<Outcome, Error> {
         return apply_rule(rule, configuration.destinations, target);
     }
     apply_fallback(configuration.fallback, configuration.destinations, target)
+}
+
+pub fn discovered_destinations() -> Vec<BrowserDestination> {
+    let mut used = std::collections::HashSet::new();
+    discovery::discover()
+        .ordinary
+        .into_iter()
+        .map(|candidate| {
+            let id = discovery::unique_slug(
+                &discovery::suggested_slug(&candidate.desktop_id),
+                &mut used,
+            );
+            BrowserDestination {
+                id,
+                label: candidate.name.clone(),
+                application_label: candidate.name,
+                profile_label: None,
+                icon_name: None,
+                launch: DestinationLaunch::Discovered {
+                    desktop_id: candidate.desktop_id,
+                },
+                unavailable_reason: None,
+            }
+        })
+        .collect()
 }
 
 pub fn evaluate(configuration: &Configuration, target: &WebTarget) -> RoutingEvaluation {

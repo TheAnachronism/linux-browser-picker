@@ -98,8 +98,8 @@ msgstr "Browser Picker configuration could not be read"
 msgid "Configuration is not valid versioned TOML"
 msgstr "Configuration is not valid versioned TOML"
 
-msgid "Unsupported configuration version {version}; expected version 1"
-msgstr "Unsupported configuration version {version}; expected version 1"
+msgid "Unsupported configuration version {version}; expected version {expected}"
+msgstr "Unsupported configuration version {version}; expected version {expected}"
 
 msgid "Browser Destination ID '{id}' must be a lowercase slug"
 msgstr "Browser Destination ID '{id}' must be a lowercase slug"
@@ -521,3 +521,66 @@ msgstr "Exact query values are stored as plain text"
 
 msgid "Configuration permission warning"
 msgstr "Configuration permission warning"
+
+msgid "Unknown configuration key '{key}'"
+msgstr "Unknown configuration key '{key}'"
+
+msgid "Unknown configuration key '{key}' at line {line}"
+msgstr "Unknown configuration key '{key}' at line {line}"
+
+msgid "Duplicate configuration key '{key}'"
+msgstr "Duplicate configuration key '{key}'"
+
+msgid "Duplicate configuration key '{key}' at line {line}"
+msgstr "Duplicate configuration key '{key}' at line {line}"
+
+msgid "Configuration key '{key}' has an invalid type"
+msgstr "Configuration key '{key}' has an invalid type"
+
+msgid "Configuration key '{key}' has an invalid type at line {line}"
+msgstr "Configuration key '{key}' has an invalid type at line {line}"
+
+msgid "Configuration has an invalid type"
+msgstr "Configuration has an invalid type"
+
+msgid "Configuration has an invalid type at line {line}"
+msgstr "Configuration has an invalid type at line {line}"
+
+msgid "Missing configuration field '{key}'"
+msgstr "Missing configuration field '{key}'"
+
+msgid "Configuration schema version {from} requires a confirmed migration to version {to}"
+msgstr "Configuration schema version {from} requires a confirmed migration to version {to}"
+
+msgid "Migrate configuration schema from version {from} to {to}: {changes}"
+msgstr "Migrate configuration schema from version {from} to {to}: {changes}"
+
+msgid "Update schema version from 0 to 1"
+msgstr "Update schema version from 0 to 1"
+
+msgid "Configuration migration required"
+msgstr "Configuration migration required"
+
+msgid "Confirm to create an owner-only backup and replace the configuration. The waiting Open Target will open in the Picker after migration."
+msgstr "Confirm to create an owner-only backup and replace the configuration. The waiting Open Target will open in the Picker after migration."
+
+msgid "Configuration schema migration was cancelled. Automatic routing is disabled until the file is migrated or repaired."
+msgstr "Configuration schema migration was cancelled. Automatic routing is disabled until the file is migrated or repaired."
+
+msgid "The invalid file was left unchanged. Enable destinations and save to replace it. Independently discovered browsers are listed below."
+msgstr "The invalid file was left unchanged. Enable destinations and save to replace it. Independently discovered browsers are listed below."
+
+msgid "_Migrate"
+msgstr "_Migrate"
+
+msgid "_Repair configuration"
+msgstr "_Repair configuration"
+
+msgid "Configuration or launch error"
+msgstr "Configuration or launch error"
+
+msgid "Configuration recovery error"
+msgstr "Configuration recovery error"
+
+msgid "Configuration migration preview"
+msgstr "Configuration migration preview"

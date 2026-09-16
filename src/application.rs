@@ -9,7 +9,7 @@ use gtk::gdk;
 use gtk::gio;
 use gtk::glib;
 
-use crate::configuration::{self, BrowserDestination, LaunchMode};
+use crate::configuration::{self, BrowserDestination, LaunchMode, MigrationPreview};
 use crate::i18n;
 use crate::launcher;
 use crate::open_target::OpenTarget;
@@ -34,6 +34,9 @@ pub(crate) struct PickerSession {
     picker_window: Rc<RefCell<glib::WeakRef<adw::ApplicationWindow>>>,
     rebuilding: Rc<RefCell<bool>>,
     configuration_open: Rc<RefCell<bool>>,
+    recovery_error: Rc<RefCell<Option<String>>>,
+    migration_preview: Rc<RefCell<Option<MigrationPreview>>>,
+    preserve_picker: Rc<RefCell<bool>>,
 }
 
 impl PickerSession {
@@ -45,6 +48,9 @@ impl PickerSession {
             picker_window: Rc::new(RefCell::new(glib::WeakRef::new())),
             rebuilding: Rc::new(RefCell::new(false)),
             configuration_open: Rc::new(RefCell::new(false)),
+            recovery_error: Rc::new(RefCell::new(None)),
+            migration_preview: Rc::new(RefCell::new(None)),
+            preserve_picker: Rc::new(RefCell::new(false)),
         }
     }
 
@@ -132,7 +138,7 @@ pub fn run() -> glib::ExitCode {
             }
 
             let mut status = glib::ExitCode::SUCCESS;
-            let mut needs_setup = false;
+            let mut presentation = Presentation::None;
             for (index, argument) in arguments.iter().enumerate() {
                 if index == MAX_TARGETS_PER_ACTIVATION {
                     command_line.printerr_literal(&format!(
@@ -143,7 +149,7 @@ pub fn run() -> glib::ExitCode {
                     break;
                 }
                 match accept_target(&session, argument) {
-                    Ok(target_needs_setup) => needs_setup |= target_needs_setup,
+                    Ok(next) => presentation = presentation.merge(next),
                     Err((message, error_status)) => {
                         command_line.printerr_literal(&format!("{message}\n"));
                         if status == glib::ExitCode::SUCCESS {
@@ -153,7 +159,7 @@ pub fn run() -> glib::ExitCode {
                 }
             }
 
-            present_accepted(application, &session, needs_setup);
+            present_accepted(application, &session, presentation);
             status
         }
     ));
@@ -161,7 +167,7 @@ pub fn run() -> glib::ExitCode {
         #[strong]
         session,
         move |application, files, _| {
-            let mut needs_setup = false;
+            let mut presentation = Presentation::None;
             let mut errors = Vec::new();
             for (index, file) in files.iter().enumerate() {
                 if index == MAX_TARGETS_PER_ACTIVATION {
@@ -172,11 +178,11 @@ pub fn run() -> glib::ExitCode {
                 }
                 let argument = file.uri();
                 match accept_target(&session, OsStr::new(argument.as_str())) {
-                    Ok(target_needs_setup) => needs_setup |= target_needs_setup,
+                    Ok(next) => presentation = presentation.merge(next),
                     Err((message, _)) => errors.push(message),
                 }
             }
-            present_accepted(application, &session, needs_setup);
+            present_accepted(application, &session, presentation);
             if !errors.is_empty() {
                 show_request_error(application, &errors.join("\n"));
             }
@@ -185,60 +191,108 @@ pub fn run() -> glib::ExitCode {
     application.run()
 }
 
-fn accept_target(session: &PickerSession, argument: &OsStr) -> Result<bool, (String, u8)> {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Presentation {
+    None,
+    Picker,
+    Recover,
+    Setup,
+    Migrate,
+}
+
+impl Presentation {
+    fn merge(self, other: Self) -> Self {
+        use Presentation::*;
+        match (self, other) {
+            (Migrate, _) | (_, Migrate) => Migrate,
+            (Setup, _) | (_, Setup) => Setup,
+            (Recover, _) | (_, Recover) => Recover,
+            (Picker, _) | (_, Picker) => Picker,
+            (None, None) => None,
+        }
+    }
+}
+
+fn accept_target(session: &PickerSession, argument: &OsStr) -> Result<Presentation, (String, u8)> {
     match routing::route(argument) {
-        Ok(routing::Outcome::Dispatched) => Ok(false),
+        Ok(routing::Outcome::Dispatched) => Ok(Presentation::None),
         Ok(routing::Outcome::Pick {
             target,
             destinations,
             preselection,
         }) => {
-            if session.pending.borrow().len() == MAX_PENDING_REQUESTS {
-                return Err((
-                    i18n::text("The Pending Request queue is full"),
-                    STATUS_OVERFLOW,
-                ));
-            }
+            queue_request(session, target, preselection)?;
             *session.destinations.borrow_mut() = destinations;
-            session.pending.borrow_mut().push_back(PendingRequest {
-                target,
-                preselection,
-            });
-            Ok(false)
+            Ok(Presentation::Picker)
         }
         Ok(routing::Outcome::Setup { target }) => {
-            if session.pending.borrow().len() == MAX_PENDING_REQUESTS {
-                return Err((
-                    i18n::text("The Pending Request queue is full"),
-                    STATUS_OVERFLOW,
-                ));
-            }
-            session.pending.borrow_mut().push_back(PendingRequest {
-                target,
-                preselection: None,
-            });
-            Ok(true)
+            queue_request(session, target, None)?;
+            Ok(Presentation::Setup)
+        }
+        Ok(routing::Outcome::Recover {
+            target,
+            error,
+            destinations,
+        }) => {
+            queue_request(session, target, None)?;
+            *session.destinations.borrow_mut() = destinations;
+            *session.recovery_error.borrow_mut() = Some(error.message());
+            *session.preserve_picker.borrow_mut() = true;
+            Ok(Presentation::Recover)
+        }
+        Ok(routing::Outcome::Migrate { target, preview }) => {
+            queue_request(session, target, None)?;
+            *session.migration_preview.borrow_mut() = Some(preview);
+            *session.preserve_picker.borrow_mut() = true;
+            Ok(Presentation::Migrate)
         }
         Err(error) => Err(crate::routing_error_message(error)),
     }
 }
 
-fn present_accepted(application: &adw::Application, session: &PickerSession, needs_setup: bool) {
-    if needs_setup {
-        if let Some(window) = application.active_window() {
-            window.present();
-        } else {
-            present_setup(application, session);
+fn queue_request(
+    session: &PickerSession,
+    target: OpenTarget,
+    preselection: Option<Preselection>,
+) -> Result<(), (String, u8)> {
+    if session.pending.borrow().len() == MAX_PENDING_REQUESTS {
+        return Err((
+            i18n::text("The Pending Request queue is full"),
+            STATUS_OVERFLOW,
+        ));
+    }
+    session.pending.borrow_mut().push_back(PendingRequest {
+        target,
+        preselection,
+    });
+    Ok(())
+}
+
+fn present_accepted(
+    application: &adw::Application,
+    session: &PickerSession,
+    presentation: Presentation,
+) {
+    match presentation {
+        Presentation::None => {}
+        Presentation::Setup => {
+            if let Some(window) = application.active_window() {
+                window.present();
+            } else {
+                present_setup(application, session);
+            }
         }
-    } else if !session.pending.borrow().is_empty() {
-        session.update_remaining();
-        if session.configuration_is_open() {
-            return;
-        }
-        if let Some(window) = session.picker_window.borrow().upgrade() {
-            window.present();
-        } else {
-            show_picker(application, session.clone());
+        Presentation::Migrate => present_migration(application, session),
+        Presentation::Picker | Presentation::Recover => {
+            session.update_remaining();
+            if session.configuration_is_open() {
+                return;
+            }
+            if let Some(window) = session.picker_window.borrow().upgrade() {
+                window.present();
+            } else {
+                show_picker(application, session.clone());
+            }
         }
     }
 }
@@ -247,6 +301,15 @@ pub(crate) fn reapply_front(
     application: &adw::Application,
     session: &PickerSession,
 ) -> Result<(), (String, u8)> {
+    if *session.preserve_picker.borrow() {
+        *session.recovery_error.borrow_mut() = None;
+        if let Ok(configuration::Inspected::Ready(configuration)) = configuration::inspect() {
+            *session.destinations.borrow_mut() = configuration.destinations;
+        }
+        *session.preserve_picker.borrow_mut() = false;
+        session.rebuild_picker(application);
+        return Ok(());
+    }
     let Some(request) = session.pending.borrow_mut().pop_front() else {
         return Ok(());
     };
@@ -278,6 +341,29 @@ pub(crate) fn reapply_front(
                 crate::STATUS_CONFIGURATION,
             ))
         }
+        Ok(routing::Outcome::Recover {
+            target,
+            error,
+            destinations,
+        }) => {
+            session.pending.borrow_mut().push_front(PendingRequest {
+                target,
+                preselection: None,
+            });
+            *session.destinations.borrow_mut() = destinations;
+            *session.recovery_error.borrow_mut() = Some(error.message());
+            session.rebuild_picker(application);
+            Ok(())
+        }
+        Ok(routing::Outcome::Migrate { target, preview }) => {
+            session.pending.borrow_mut().push_front(PendingRequest {
+                target,
+                preselection: None,
+            });
+            *session.migration_preview.borrow_mut() = Some(preview);
+            present_migration(application, session);
+            Ok(())
+        }
         Err(failure) => {
             session.pending.borrow_mut().push_front(request);
             Err(crate::routing_error_message(failure))
@@ -286,13 +372,7 @@ pub(crate) fn reapply_front(
 }
 
 fn open_configuration_store() -> Result<configuration::ConfigurationStore, configuration::Error> {
-    let path = configuration::default_path()?;
-    match configuration::ConfigurationStore::open_path(&path) {
-        Err(configuration::Error::Read(std::io::ErrorKind::NotFound)) => {
-            configuration::ConfigurationStore::create_path(&path)
-        }
-        result => result,
-    }
+    configuration::ConfigurationStore::inspect_path(&configuration::default_path()?)
 }
 
 fn present_setup(application: &adw::Application, session: &PickerSession) {
@@ -300,6 +380,138 @@ fn present_setup(application: &adw::Application, session: &PickerSession) {
         Ok(store) => setup::present(application, session.clone(), store),
         Err(_) => show_configuration_window(application),
     }
+}
+
+fn present_migration(application: &adw::Application, session: &PickerSession) {
+    let Some(preview) = session.migration_preview.borrow().clone() else {
+        show_picker(application, session.clone());
+        return;
+    };
+    if let Some(window) = application
+        .windows()
+        .into_iter()
+        .find(|window| window.widget_name() == "configuration-migration")
+    {
+        window.present();
+        return;
+    }
+
+    let content = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    content.set_margin_top(18);
+    content.set_margin_bottom(18);
+    content.set_margin_start(18);
+    content.set_margin_end(18);
+    let heading = gtk::Label::builder()
+        .label(i18n::text("Configuration migration required"))
+        .xalign(0.0)
+        .build();
+    heading.add_css_class("title-2");
+    content.append(&heading);
+    let details = gtk::Label::builder()
+        .label(preview.message())
+        .xalign(0.0)
+        .wrap(true)
+        .selectable(true)
+        .build();
+    details.update_property(&[gtk::accessible::Property::Description(
+        "Configuration migration preview",
+    )]);
+    content.append(&details);
+    let note = gtk::Label::builder()
+        .label(i18n::text(
+            "Confirm to create an owner-only backup and replace the configuration. The waiting Open Target will open in the Picker after migration.",
+        ))
+        .xalign(0.0)
+        .wrap(true)
+        .build();
+    content.append(&note);
+    let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 9);
+    buttons.set_halign(gtk::Align::End);
+    let cancel = gtk::Button::with_mnemonic(&i18n::text("_Cancel"));
+    let migrate = gtk::Button::with_mnemonic(&i18n::text("_Migrate"));
+    migrate.add_css_class("suggested-action");
+    migrate.update_property(&[
+        gtk::accessible::Property::Label("Migrate"),
+        gtk::accessible::Property::KeyShortcuts("<Alt>m"),
+    ]);
+    buttons.append(&cancel);
+    buttons.append(&migrate);
+    content.append(&buttons);
+
+    let toolbar = adw::ToolbarView::new();
+    toolbar.add_top_bar(&adw::HeaderBar::new());
+    toolbar.set_content(Some(&content));
+    let window = adw::ApplicationWindow::builder()
+        .application(application)
+        .title(i18n::text("Browser Picker"))
+        .default_width(520)
+        .default_height(320)
+        .content(&toolbar)
+        .build();
+    window.set_widget_name("configuration-migration");
+
+    cancel.connect_clicked(glib::clone!(
+        #[weak]
+        application,
+        #[weak]
+        window,
+        #[strong]
+        session,
+        move |_| {
+            window.close();
+            *session.migration_preview.borrow_mut() = None;
+            *session.recovery_error.borrow_mut() = Some(i18n::text(
+                "Configuration schema migration was cancelled. Automatic routing is disabled until the file is migrated or repaired.",
+            ));
+            *session.destinations.borrow_mut() = routing::discovered_destinations();
+            if !session.pending.borrow().is_empty() {
+                show_picker(&application, session.clone());
+            }
+        }
+    ));
+    migrate.connect_clicked(glib::clone!(
+        #[weak]
+        application,
+        #[weak]
+        window,
+        #[strong]
+        session,
+        move |_| {
+            match apply_migration() {
+                Ok(destinations) => {
+                    window.close();
+                    *session.migration_preview.borrow_mut() = None;
+                    *session.recovery_error.borrow_mut() = None;
+                    *session.destinations.borrow_mut() = destinations;
+                    if !session.pending.borrow().is_empty() {
+                        show_picker(&application, session.clone());
+                    }
+                }
+                Err(message) => {
+                    let error = gtk::Label::builder().label(&message).wrap(true).build();
+                    error.add_css_class("error");
+                    window.set_content(Some(&error));
+                }
+            }
+        }
+    ));
+    window.present();
+    glib::idle_add_local_once(glib::clone!(
+        #[weak]
+        migrate,
+        move || {
+            migrate.grab_focus();
+        }
+    ));
+}
+
+fn apply_migration() -> Result<Vec<BrowserDestination>, String> {
+    let mut store = open_configuration_store().map_err(|error| error.message())?;
+    store.migrate().map_err(|error| error.message())?;
+    store
+        .configuration
+        .map(|configuration| configuration.destinations)
+        .ok_or_else(|| i18n::text("Saved configuration could not be reloaded"))
 }
 
 fn show_request_error(application: &adw::Application, message: &str) {
@@ -322,8 +534,17 @@ fn present_activation(application: &adw::Application, session: &PickerSession) {
         window.present();
         return;
     }
+    if session.migration_preview.borrow().is_some() {
+        present_migration(application, session);
+        return;
+    }
     if !session.pending.borrow().is_empty() {
         show_picker(application, session.clone());
+        return;
+    }
+    if let Ok(configuration::Inspected::Migratable { preview, .. }) = configuration::inspect() {
+        *session.migration_preview.borrow_mut() = Some(preview);
+        present_migration(application, session);
         return;
     }
     present_setup(application, session);
@@ -425,6 +646,21 @@ pub(crate) fn show_picker(application: &adw::Application, session: PickerSession
         move |_| present_setup(&application, &session)
     ));
     content.append(&edit_rules);
+    let repair_configuration = gtk::Button::with_mnemonic(&i18n::text("_Repair configuration"));
+    repair_configuration.update_property(&[
+        gtk::accessible::Property::Label("Repair configuration"),
+        gtk::accessible::Property::KeyShortcuts("<Alt>r"),
+    ]);
+    repair_configuration.connect_clicked(glib::clone!(
+        #[weak]
+        application,
+        #[strong]
+        session,
+        move |_| present_setup(&application, &session)
+    ));
+    if session.recovery_error.borrow().is_some() {
+        content.append(&repair_configuration);
+    }
 
     let search = gtk::SearchEntry::builder()
         .placeholder_text(i18n::text("Filter destinations"))
@@ -441,7 +677,13 @@ pub(crate) fn show_picker(application: &adw::Application, session: PickerSession
         .build();
     error.set_focusable(true);
     error.add_css_class("error");
-    error.update_property(&[gtk::accessible::Property::Description("Launch error")]);
+    error.update_property(&[gtk::accessible::Property::Description(
+        "Configuration or launch error",
+    )]);
+    if let Some(message) = session.recovery_error.borrow().clone() {
+        error.set_label(&message);
+        error.set_visible(true);
+    }
     content.append(&error);
 
     let list = gtk::ListBox::new();

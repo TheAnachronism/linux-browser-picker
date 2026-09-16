@@ -160,9 +160,64 @@ fn unsupported_configuration_version_fails_closed() {
 
     assert_eq!(output.status.code(), Some(3));
     assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).expect("error output should be UTF-8");
     assert_eq!(
-        String::from_utf8(output.stderr).expect("error output should be UTF-8"),
+        stderr,
         "Unsupported configuration version 2; expected version 1\n"
+    );
+    assert!(!stderr.contains("secret"));
+    assert!(!stderr.contains("do-not-print"));
+    assert_eq!(
+        fs::read_to_string(config_home.path().join("browser-picker/config.toml")).unwrap(),
+        "version = 2\n\ndestinations = []\n\n[fallback]\naction = \"open\"\ndestination = \"missing\"\n",
+    );
+}
+
+#[test]
+fn old_schema_without_a_session_is_not_migrated() {
+    let config_home = TempDir::new().expect("temporary configuration home should be created");
+    let source = include_str!("fixtures/schema/v0.toml");
+    write_raw_config(&config_home, source);
+
+    let output = browser_picker(&config_home)
+        .arg("https://user:secret@example.com/?q=token")
+        .output()
+        .expect("Browser Picker should start");
+
+    assert_eq!(output.status.code(), Some(3));
+    let stderr = String::from_utf8(output.stderr).expect("error output should be UTF-8");
+    assert_eq!(
+        stderr,
+        "Configuration schema version 0 requires a confirmed migration to version 1\n"
+    );
+    assert!(!stderr.contains("secret"));
+    assert!(!stderr.contains("token"));
+    assert!(!stderr.contains("example.com"));
+    assert_eq!(
+        fs::read_to_string(config_home.path().join("browser-picker/config.toml")).unwrap(),
+        source
+    );
+}
+
+#[test]
+fn invalid_toml_fails_closed_without_using_a_subset() {
+    let config_home = TempDir::new().expect("temporary configuration home should be created");
+    let source = "version = 1\nthis is not [[toml\n";
+    write_raw_config(&config_home, source);
+
+    let output = browser_picker(&config_home)
+        .arg("https://example.com/?secret=do-not-print")
+        .output()
+        .expect("Browser Picker should start");
+
+    assert_eq!(output.status.code(), Some(3));
+    let stderr = String::from_utf8(output.stderr).expect("error output should be UTF-8");
+    assert_eq!(stderr, "Configuration is not valid versioned TOML\n");
+    assert!(!stderr.contains("secret"));
+    assert!(!stderr.contains("do-not-print"));
+    assert_eq!(
+        fs::read_to_string(config_home.path().join("browser-picker/config.toml")).unwrap(),
+        source
     );
 }
 
@@ -279,10 +334,18 @@ fn manual_destination_rejects_prohibited_launch_features() {
             .expect("Browser Picker should start");
 
         assert_eq!(output.status.code(), Some(3));
-        assert_eq!(
-            String::from_utf8(output.stderr).expect("error output should be UTF-8"),
-            "Configuration is not valid versioned TOML\n"
+        let stderr = String::from_utf8(output.stderr).expect("error output should be UTF-8");
+        assert!(
+            stderr.starts_with("Unknown configuration key '"),
+            "{stderr}"
         );
+        assert!(stderr.contains(" at line "), "{stderr}");
+        assert!(!stderr.contains("controlled-browser"));
+        assert!(!stderr.contains("/tmp"));
+        let saved =
+            fs::read_to_string(config_home.path().join("browser-picker/config.toml")).unwrap();
+        assert!(!saved.contains("https://example.com/"));
+        assert_eq!(output.stdout.len(), 0);
     }
 }
 
@@ -569,10 +632,9 @@ fn discovered_destination_rejects_parsed_command_fields() {
         .expect("Browser Picker should start");
 
     assert_eq!(output.status.code(), Some(3));
-    assert_eq!(
-        String::from_utf8(output.stderr).expect("error output should be UTF-8"),
-        "Configuration is not valid versioned TOML\n"
-    );
+    let stderr = String::from_utf8(output.stderr).expect("error output should be UTF-8");
+    assert_eq!(stderr, "Unknown configuration key 'exec' at line 7\n");
+    assert!(!stderr.contains("/bin/true"));
 }
 
 #[test]

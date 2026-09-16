@@ -81,6 +81,41 @@ pub fn present(application: &adw::Application, session: PickerSession, store: Co
     heading.add_css_class("title-2");
     content.append(&heading);
 
+    match &store.status {
+        configuration::StoreStatus::Invalid(error) => {
+            let recovery = gtk::Label::builder()
+                .label(error.message())
+                .xalign(0.0)
+                .wrap(true)
+                .build();
+            recovery.add_css_class("error");
+            recovery.update_property(&[gtk::accessible::Property::Description(
+                "Configuration recovery error",
+            )]);
+            content.append(&recovery);
+            let hint = gtk::Label::builder()
+                .label(i18n::text(
+                    "The invalid file was left unchanged. Enable destinations and save to replace it. Independently discovered browsers are listed below.",
+                ))
+                .xalign(0.0)
+                .wrap(true)
+                .build();
+            content.append(&hint);
+        }
+        configuration::StoreStatus::Migratable(preview) => {
+            let recovery = gtk::Label::builder()
+                .label(preview.message())
+                .xalign(0.0)
+                .wrap(true)
+                .build();
+            recovery.update_property(&[gtk::accessible::Property::Description(
+                "Configuration migration preview",
+            )]);
+            content.append(&recovery);
+        }
+        _ => {}
+    }
+
     if let Some(target) = pending.borrow().front() {
         let waiting = gtk::Label::builder()
             .label(i18n::text(

@@ -78,7 +78,7 @@ msgstr ""
 msgid "Configuration is not valid versioned TOML"
 msgstr ""
 
-msgid "Unsupported configuration version {version}; expected version 1"
+msgid "Unsupported configuration version {version}; expected version {expected}"
 msgstr ""
 
 msgid "Browser Destination ID '{id}' must be a lowercase slug"
@@ -481,4 +481,67 @@ msgid "Exact query values are stored as plain text"
 msgstr ""
 
 msgid "Configuration permission warning"
+msgstr ""
+
+msgid "Unknown configuration key '{key}'"
+msgstr ""
+
+msgid "Unknown configuration key '{key}' at line {line}"
+msgstr ""
+
+msgid "Duplicate configuration key '{key}'"
+msgstr ""
+
+msgid "Duplicate configuration key '{key}' at line {line}"
+msgstr ""
+
+msgid "Configuration key '{key}' has an invalid type"
+msgstr ""
+
+msgid "Configuration key '{key}' has an invalid type at line {line}"
+msgstr ""
+
+msgid "Configuration has an invalid type"
+msgstr ""
+
+msgid "Configuration has an invalid type at line {line}"
+msgstr ""
+
+msgid "Missing configuration field '{key}'"
+msgstr ""
+
+msgid "Configuration schema version {from} requires a confirmed migration to version {to}"
+msgstr ""
+
+msgid "Migrate configuration schema from version {from} to {to}: {changes}"
+msgstr ""
+
+msgid "Update schema version from 0 to 1"
+msgstr ""
+
+msgid "Configuration migration required"
+msgstr ""
+
+msgid "Confirm to create an owner-only backup and replace the configuration. The waiting Open Target will open in the Picker after migration."
+msgstr ""
+
+msgid "Configuration schema migration was cancelled. Automatic routing is disabled until the file is migrated or repaired."
+msgstr ""
+
+msgid "The invalid file was left unchanged. Enable destinations and save to replace it. Independently discovered browsers are listed below."
+msgstr ""
+
+msgid "_Migrate"
+msgstr ""
+
+msgid "_Repair configuration"
+msgstr ""
+
+msgid "Configuration or launch error"
+msgstr ""
+
+msgid "Configuration recovery error"
+msgstr ""
+
+msgid "Configuration migration preview"
 msgstr ""

@@ -664,6 +664,103 @@
                                       unset BROWSER_PICKER_TEST_OUTPUT
                                     }
 
+                                    run_invalid_configuration_recovery() {
+                                      export XDG_CONFIG_HOME="$TMPDIR/invalid-config"
+                                      mkdir -p "$XDG_CONFIG_HOME/browser-picker"
+                                      cat > "$XDG_CONFIG_HOME/browser-picker/config.toml" <<EOF
+                version = 1
+                this is not [[toml
+                secret = "https://user:pass@example.com/?q=1"
+                EOF
+                                      original=$(cat "$XDG_CONFIG_HOME/browser-picker/config.toml")
+                                      export BROWSER_PICKER_TEST_OUTPUT="$TMPDIR/invalid-argv"
+                                      rm -f "$BROWSER_PICKER_TEST_OUTPUT"
+                                      target="https://example.com/recover?token=kept-private"
+                                      ${browser-picker}/bin/browser-picker "$target" &
+                                      launcher=$!
+                                      window=
+                                      for attempt in $(seq 1 100); do
+                                        set -- $(xdotool search --onlyvisible --name "^Browser Picker$" 2>/dev/null || true)
+                                        if [ "$#" -gt 0 ]; then
+                                          window=$1
+                                          break
+                                        fi
+                                        sleep 0.1
+                                      done
+                                      test -n "$window"
+                                      test ! -f "$BROWSER_PICKER_TEST_OUTPUT"
+                                      test "$(cat "$XDG_CONFIG_HOME/browser-picker/config.toml")" = "$original"
+                                      xdotool windowfocus --sync "$window"
+                                      xdotool key --clearmodifiers alt+1
+                                      for attempt in $(seq 1 100); do
+                                        test -f "$BROWSER_PICKER_TEST_OUTPUT" && break
+                                        sleep 0.1
+                                      done
+                                      grep -F "$target" "$BROWSER_PICKER_TEST_OUTPUT"
+                                      test "$(cat "$XDG_CONFIG_HOME/browser-picker/config.toml")" = "$original"
+                                      wait "$launcher"
+                                      unset BROWSER_PICKER_TEST_OUTPUT
+                                      export XDG_CONFIG_HOME="$TMPDIR/config"
+                                    }
+
+                                    run_old_schema_migration_keeps_target_pending() {
+                                      export XDG_CONFIG_HOME="$TMPDIR/migrate-config"
+                                      mkdir -p "$XDG_CONFIG_HOME/browser-picker"
+                                      sed "s/version = 1/version = 0/" "$TMPDIR/config/browser-picker/config.toml" > "$XDG_CONFIG_HOME/browser-picker/config.toml"
+                                      original=$(cat "$XDG_CONFIG_HOME/browser-picker/config.toml")
+                                      grep -q "version = 0" "$XDG_CONFIG_HOME/browser-picker/config.toml"
+                                      export BROWSER_PICKER_TEST_OUTPUT="$TMPDIR/migrate-argv"
+                                      rm -f "$BROWSER_PICKER_TEST_OUTPUT"
+                                      target="https://automatic.example/migrated?token=kept-private"
+                                      ${browser-picker}/bin/browser-picker "$target" &
+                                      launcher=$!
+                                      window=
+                                      for attempt in $(seq 1 100); do
+                                        set -- $(xdotool search --onlyvisible --name "^Browser Picker$" 2>/dev/null || true)
+                                        if [ "$#" -gt 0 ]; then
+                                          window=$1
+                                          break
+                                        fi
+                                        sleep 0.1
+                                      done
+                                      test -n "$window"
+                                      test ! -f "$BROWSER_PICKER_TEST_OUTPUT"
+                                      test "$(cat "$XDG_CONFIG_HOME/browser-picker/config.toml")" = "$original"
+                                      xdotool windowfocus --sync "$window"
+                                      xdotool key --clearmodifiers alt+m
+                                      for attempt in $(seq 1 100); do
+                                        grep -q "version = 1" "$XDG_CONFIG_HOME/browser-picker/config.toml" && break
+                                        sleep 0.1
+                                      done
+                                      grep -q "version = 1" "$XDG_CONFIG_HOME/browser-picker/config.toml"
+                                      if grep -q "version = 0" "$XDG_CONFIG_HOME/browser-picker/config.toml"; then exit 1; fi
+                                      test ! -f "$BROWSER_PICKER_TEST_OUTPUT"
+                                      set -- "$XDG_CONFIG_HOME/browser-picker"/config.toml.bak-*
+                                      test -f "$1"
+                                      test "$(stat -c %a "$1")" = "600"
+                                      window=
+                                      for attempt in $(seq 1 100); do
+                                        set -- $(xdotool search --onlyvisible --name "^Browser Picker$" 2>/dev/null || true)
+                                        if [ "$#" -gt 0 ]; then
+                                          window=$1
+                                          break
+                                        fi
+                                        sleep 0.1
+                                      done
+                                      test -n "$window"
+                                      xdotool windowfocus --sync "$window"
+                                      xdotool key --clearmodifiers alt+2
+                                      for attempt in $(seq 1 100); do
+                                        test -f "$BROWSER_PICKER_TEST_OUTPUT" && break
+                                        sleep 0.1
+                                      done
+                                      test "$(cat "$BROWSER_PICKER_TEST_OUTPUT")" = "--normal
+                $target"
+                                      wait "$launcher"
+                                      unset BROWSER_PICKER_TEST_OUTPUT
+                                      export XDG_CONFIG_HOME="$TMPDIR/config"
+                                    }
+
                                     run_first_run_and_picker
                                     run_and_assert_window ${browser-picker}/bin/browser-picker
                                     run_and_assert_window gtk-launch io.github.TheAnachronism.BrowserPicker
@@ -675,6 +772,8 @@
                                     run_queue_limit_and_escape
                                     run_activation_limit
                                     run_paused_configuration_and_live_routing
+                                    run_invalid_configuration_recovery
+                                    run_old_schema_migration_keeps_target_pending
                                   '
 
                                 touch "$out"

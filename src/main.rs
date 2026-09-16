@@ -47,9 +47,12 @@ fn main() -> gtk::glib::ExitCode {
         {
             match routing::route(argument) {
                 Ok(routing::Outcome::Dispatched) => gtk::glib::ExitCode::SUCCESS,
-                Ok(routing::Outcome::Pick { .. } | routing::Outcome::Setup { .. }) => {
-                    application::run()
-                }
+                Ok(
+                    routing::Outcome::Pick { .. }
+                    | routing::Outcome::Setup { .. }
+                    | routing::Outcome::Recover { .. }
+                    | routing::Outcome::Migrate { .. },
+                ) => application::run(),
                 Err(error) => {
                     let (message, status) = routing_error_message(error);
                     eprintln!("{message}");

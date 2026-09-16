@@ -7,12 +7,15 @@ use std::path::{Path, PathBuf};
 
 use gtk::gio::prelude::AppInfoExt;
 use serde::{Deserialize, Serialize};
+use toml_edit::{DocumentMut, Item};
 
 use crate::discovery;
 use crate::i18n;
 use crate::profiles::{self, ProfileIdentity};
 
-pub use store::{ConfigurationStore, SaveConflictPolicy};
+pub use store::{ConfigurationStore, SaveConflictPolicy, StoreStatus};
+
+pub const CURRENT_VERSION: u32 = 1;
 
 #[derive(Clone, Debug)]
 pub struct BrowserDestination {
@@ -199,14 +202,51 @@ pub struct Configuration {
     pub fallback: FallbackAction,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MigrationPreview {
+    pub from: u32,
+    pub to: u32,
+    pub changes: Vec<String>,
+}
+
+impl MigrationPreview {
+    pub fn message(&self) -> String {
+        let changes = self.changes.join("; ");
+        i18n::text_with(
+            "Migrate configuration schema from version {from} to {to}: {changes}",
+            &[
+                ("{from}", &self.from.to_string()),
+                ("{to}", &self.to.to_string()),
+                ("{changes}", &changes),
+            ],
+        )
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum Inspected {
+    Missing,
+    Ready(Configuration),
+    Invalid(Error),
+    Migratable {
+        configuration: Configuration,
+        preview: MigrationPreview,
+    },
+}
+
+#[derive(Clone, Debug)]
 pub enum Error {
     ConfigHomeNotAbsolute,
     HomeNotSet,
     Read(ErrorKind),
     Save(ErrorKind),
     InvalidToml,
+    UnknownKey { key: String, line: Option<usize> },
+    DuplicateField { key: String, line: Option<usize> },
+    InvalidType { key: String, line: Option<usize> },
+    MissingField(String),
     UnsupportedVersion(u32),
+    MigrationRequired { from: u32, to: u32 },
     InvalidId(String),
     DuplicateId(String),
     InvalidLabel(String),
@@ -278,9 +318,58 @@ impl Error {
             }
             Self::Save(_) => i18n::text("Browser Picker configuration could not be saved"),
             Self::InvalidToml => i18n::text("Configuration is not valid versioned TOML"),
+            Self::UnknownKey {
+                key,
+                line: Some(line),
+            } => i18n::text_with(
+                "Unknown configuration key '{key}' at line {line}",
+                &[("{key}", key), ("{line}", &line.to_string())],
+            ),
+            Self::UnknownKey { key, line: None } => {
+                i18n::text_with("Unknown configuration key '{key}'", &[("{key}", key)])
+            }
+            Self::DuplicateField {
+                key,
+                line: Some(line),
+            } => i18n::text_with(
+                "Duplicate configuration key '{key}' at line {line}",
+                &[("{key}", key), ("{line}", &line.to_string())],
+            ),
+            Self::DuplicateField { key, line: None } => {
+                i18n::text_with("Duplicate configuration key '{key}'", &[("{key}", key)])
+            }
+            Self::InvalidType {
+                key,
+                line: Some(line),
+            } if !key.is_empty() => i18n::text_with(
+                "Configuration key '{key}' has an invalid type at line {line}",
+                &[("{key}", key), ("{line}", &line.to_string())],
+            ),
+            Self::InvalidType {
+                key: _,
+                line: Some(line),
+            } => i18n::text_with(
+                "Configuration has an invalid type at line {line}",
+                &[("{line}", &line.to_string())],
+            ),
+            Self::InvalidType { key, line: None } if !key.is_empty() => i18n::text_with(
+                "Configuration key '{key}' has an invalid type",
+                &[("{key}", key)],
+            ),
+            Self::InvalidType { .. } => i18n::text("Configuration has an invalid type"),
+            Self::MissingField(key) => {
+                i18n::text_with("Missing configuration field '{key}'", &[("{key}", key)])
+            }
             Self::UnsupportedVersion(version) => i18n::text_with(
-                "Unsupported configuration version {version}; expected version 1",
-                &[("{version}", &version.to_string())],
+                "Unsupported configuration version {version}; expected version {expected}",
+                &[
+                    ("{version}", &version.to_string()),
+                    ("{expected}", &CURRENT_VERSION.to_string()),
+                ],
+            ),
+            Self::MigrationRequired { from, to } => i18n::text_with(
+                "Configuration schema version {from} requires a confirmed migration to version {to}",
+                &[("{from}", &from.to_string()), ("{to}", &to.to_string())],
             ),
             Self::InvalidId(id) => i18n::text_with(
                 "Browser Destination ID '{id}' must be a lowercase slug",
@@ -444,10 +533,12 @@ enum FallbackFile {
     ShowPicker,
 }
 
+#[allow(dead_code)]
 pub fn load() -> Result<Configuration, Error> {
     store::load_from(&config_path()?)
 }
 
+#[allow(dead_code)]
 pub fn load_optional() -> Result<Option<Configuration>, Error> {
     match load() {
         Err(Error::Read(ErrorKind::NotFound)) => Ok(None),
@@ -491,11 +582,128 @@ pub(super) fn config_path() -> Result<PathBuf, Error> {
     let home = env::var_os("HOME").ok_or(Error::HomeNotSet)?;
     Ok(Path::new(&home).join(".config/browser-picker/config.toml"))
 }
+pub fn inspect() -> Result<Inspected, Error> {
+    inspect_path(&config_path()?)
+}
+
+pub fn inspect_path(path: &Path) -> Result<Inspected, Error> {
+    Ok(ConfigurationStore::inspect_path(path)?.into_inspected())
+}
+
+pub fn migration_preview(from: u32) -> Option<MigrationPreview> {
+    if from >= CURRENT_VERSION {
+        return None;
+    }
+    if from == 0 {
+        return Some(MigrationPreview {
+            from,
+            to: CURRENT_VERSION,
+            changes: vec![i18n::text("Update schema version from 0 to 1")],
+        });
+    }
+    None
+}
+
+pub(super) fn inspect_source(source: &str) -> Inspected {
+    let document = match source.parse::<DocumentMut>() {
+        Ok(document) => document,
+        Err(_) => return Inspected::Invalid(Error::InvalidToml),
+    };
+    let version = match read_version(source, &document) {
+        Ok(version) => version,
+        Err(error) => return Inspected::Invalid(error),
+    };
+    if version > CURRENT_VERSION {
+        return Inspected::Invalid(Error::UnsupportedVersion(version));
+    }
+    let file = match parse_file(source) {
+        Ok(file) => file,
+        Err(error) => return Inspected::Invalid(error),
+    };
+    match validate_body(file) {
+        Ok(configuration) if version == CURRENT_VERSION => Inspected::Ready(configuration),
+        Ok(configuration) => match migration_preview(version) {
+            Some(preview) => Inspected::Migratable {
+                configuration,
+                preview,
+            },
+            None => Inspected::Invalid(Error::UnsupportedVersion(version)),
+        },
+        Err(error) => Inspected::Invalid(error),
+    }
+}
+
+fn read_version(source: &str, document: &DocumentMut) -> Result<u32, Error> {
+    match document.get("version") {
+        None => Err(Error::MissingField("version".to_owned())),
+        Some(item) => integer_version(item).ok_or_else(|| Error::InvalidType {
+            key: "version".to_owned(),
+            line: item.span().map(|span| diagnostic_line(source, span.start)),
+        }),
+    }
+}
+
+fn integer_version(item: &Item) -> Option<u32> {
+    u32::try_from(item.as_integer()?).ok()
+}
+
+pub(super) fn parse_file(source: &str) -> Result<ConfigFile, Error> {
+    toml::from_str(source).map_err(|error| diagnostic(source, error))
+}
+
+fn diagnostic(source: &str, error: toml::de::Error) -> Error {
+    let message = error.message();
+    let line = error.span().map(|span| diagnostic_line(source, span.start));
+    if let Some(key) = quoted_token(message, "unknown field `") {
+        return Error::UnknownKey { key, line };
+    }
+    if let Some(key) = quoted_token(message, "duplicate key `") {
+        return Error::DuplicateField { key, line };
+    }
+    if let Some(key) = quoted_token(message, "missing field `") {
+        return Error::MissingField(key);
+    }
+    if message.contains("invalid type:") {
+        let key = quoted_token(message, "for key `")
+            .or_else(|| path_key(message))
+            .unwrap_or_default();
+        return Error::InvalidType { key, line };
+    }
+    Error::InvalidToml
+}
+
+fn quoted_token(message: &str, prefix: &str) -> Option<String> {
+    let rest = message.split_once(prefix)?.1;
+    let key = rest.split('`').next()?.trim();
+    (!key.is_empty()).then(|| key.to_owned())
+}
+
+fn path_key(message: &str) -> Option<String> {
+    let rest = message.split_once("in `")?.1;
+    let path = rest.split('`').next()?.trim();
+    let key = path.rsplit(['.', ']']).find(|part| !part.is_empty())?;
+    let key = key.trim_start_matches('[');
+    (!key.is_empty()).then(|| key.to_owned())
+}
+
+fn diagnostic_line(source: &str, offset: usize) -> usize {
+    source
+        .get(..offset.min(source.len()))
+        .unwrap_or(source)
+        .bytes()
+        .filter(|byte| *byte == b'\n')
+        .count()
+        + 1
+}
+
 pub(super) fn validate(file: ConfigFile) -> Result<Configuration, Error> {
-    if file.version != 1 {
+    if file.version != CURRENT_VERSION {
         return Err(Error::UnsupportedVersion(file.version));
     }
+    validate_body(file)
+}
 
+pub(super) fn validate_body(file: ConfigFile) -> Result<Configuration, Error> {
     let mut ids = HashSet::new();
     let mut labels = HashSet::new();
     let mut destinations = Vec::with_capacity(file.destinations.len());
@@ -851,7 +1059,7 @@ fn executable_is_available(executable: &str) -> bool {
 
 pub(super) fn to_file(configuration: &Configuration) -> ConfigFile {
     ConfigFile {
-        version: 1,
+        version: CURRENT_VERSION,
         destinations: configuration
             .destinations
             .iter()

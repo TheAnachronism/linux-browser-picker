@@ -7,7 +7,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use toml_edit::{ArrayOfTables, DocumentMut, Item, Table};
 
-use super::{ConfigFile, Configuration, Error, to_file, validate};
+use super::{
+    ConfigFile, Configuration, Error, Inspected, MigrationPreview, inspect_source, to_file,
+    validate,
+};
 use crate::i18n;
 
 const MAX_BACKUPS: usize = 5;
@@ -17,6 +20,14 @@ const OWNER_READ_WRITE: u32 = 0o600;
 pub enum SaveConflictPolicy {
     Abort,
     Overwrite,
+}
+
+#[derive(Clone, Debug)]
+pub enum StoreStatus {
+    Missing,
+    Current,
+    Invalid(Error),
+    Migratable(MigrationPreview),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -31,49 +42,129 @@ pub struct ConfigurationStore {
     document: DocumentMut,
     pub configuration: Option<Configuration>,
     pub warnings: Vec<String>,
+    pub status: StoreStatus,
 }
 
 impl ConfigurationStore {
+    pub fn inspect_path(path: &Path) -> Result<Self, Error> {
+        match fs::symlink_metadata(path) {
+            Err(error) if error.kind() == ErrorKind::NotFound => Ok(Self::empty(path)),
+            Err(error) => Err(Error::Read(error.kind())),
+            Ok(_) => {
+                let bytes =
+                    fs::read(resolve_path(path)?).map_err(|error| Error::Read(error.kind()))?;
+                Self::from_bytes(path, bytes)
+            }
+        }
+    }
+
+    #[allow(dead_code)]
     pub fn open_path(path: &Path) -> Result<Self, Error> {
+        let store = Self::inspect_path(path)?;
+        match &store.status {
+            StoreStatus::Current => Ok(store),
+            StoreStatus::Missing => Err(Error::Read(ErrorKind::NotFound)),
+            StoreStatus::Invalid(error) => Err(error.clone()),
+            StoreStatus::Migratable(preview) => Err(Error::MigrationRequired {
+                from: preview.from,
+                to: preview.to,
+            }),
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn create_path(path: &Path) -> Result<Self, Error> {
+        Self::inspect_path(path)
+    }
+
+    pub fn into_inspected(self) -> Inspected {
+        match self.status {
+            StoreStatus::Missing => Inspected::Missing,
+            StoreStatus::Current => self
+                .configuration
+                .map(Inspected::Ready)
+                .unwrap_or(Inspected::Invalid(Error::InvalidToml)),
+            StoreStatus::Invalid(error) => Inspected::Invalid(error),
+            StoreStatus::Migratable(preview) => match self.configuration {
+                Some(configuration) => Inspected::Migratable {
+                    configuration,
+                    preview,
+                },
+                None => Inspected::Invalid(Error::InvalidToml),
+            },
+        }
+    }
+
+    fn empty(path: &Path) -> Self {
+        Self {
+            path: path.to_path_buf(),
+            original_bytes: None,
+            document: DocumentMut::new(),
+            configuration: None,
+            warnings: Vec::new(),
+            status: StoreStatus::Missing,
+        }
+    }
+
+    fn from_bytes(path: &Path, bytes: Vec<u8>) -> Result<Self, Error> {
         let target = resolve_path(path)?;
-        let bytes = fs::read(&target).map_err(|error| Error::Read(error.kind()))?;
-        let source = String::from_utf8(bytes.clone()).map_err(|_| Error::InvalidToml)?;
-        let document = source
-            .parse::<DocumentMut>()
-            .map_err(|_| Error::InvalidToml)?;
-        let file: ConfigFile = toml::from_str(&source).map_err(|_| Error::InvalidToml)?;
-        let configuration = validate(file)?;
         let mut warnings = Vec::new();
         if let Some(warning) = mode_warning(&target) {
             warnings.push(warning);
         }
+        let Ok(source) = String::from_utf8(bytes.clone()) else {
+            return Ok(Self {
+                path: path.to_path_buf(),
+                original_bytes: Some(bytes),
+                document: DocumentMut::new(),
+                configuration: None,
+                warnings,
+                status: StoreStatus::Invalid(Error::InvalidToml),
+            });
+        };
+        let document = source
+            .parse::<DocumentMut>()
+            .unwrap_or_else(|_| DocumentMut::new());
+        let (configuration, status) = match inspect_source(&source) {
+            Inspected::Ready(configuration) => (Some(configuration), StoreStatus::Current),
+            Inspected::Migratable {
+                configuration,
+                preview,
+            } => (Some(configuration), StoreStatus::Migratable(preview)),
+            Inspected::Invalid(error) => (None, StoreStatus::Invalid(error)),
+            Inspected::Missing => (None, StoreStatus::Missing),
+        };
         Ok(Self {
             path: path.to_path_buf(),
             original_bytes: Some(bytes),
             document,
-            configuration: Some(configuration),
+            configuration,
             warnings,
+            status,
         })
-    }
-
-    pub fn create_path(path: &Path) -> Result<Self, Error> {
-        match Self::open_path(path) {
-            Ok(store) => Ok(store),
-            Err(Error::Read(ErrorKind::NotFound)) => Ok(Self {
-                path: path.to_path_buf(),
-                original_bytes: None,
-                document: DocumentMut::new(),
-                configuration: None,
-                warnings: Vec::new(),
-            }),
-            Err(error) => Err(error),
-        }
     }
 
     pub fn save(
         &mut self,
         configuration: &Configuration,
         policy: SaveConflictPolicy,
+    ) -> Result<SaveResult, Error> {
+        self.persist(configuration, policy, false)
+    }
+
+    pub fn migrate(&mut self) -> Result<SaveResult, Error> {
+        let configuration = self.configuration.clone().ok_or(Error::InvalidToml)?;
+        if !matches!(self.status, StoreStatus::Migratable(_)) {
+            return Err(Error::InvalidToml);
+        }
+        self.persist(&configuration, SaveConflictPolicy::Abort, true)
+    }
+
+    fn persist(
+        &mut self,
+        configuration: &Configuration,
+        policy: SaveConflictPolicy,
+        backup_first: bool,
     ) -> Result<SaveResult, Error> {
         let current = read_optional(&self.path)?;
         if current.as_deref() != self.original_bytes.as_deref()
@@ -94,9 +185,11 @@ impl ConfigurationStore {
         let parsed: ConfigFile = toml::from_str(&rendered).map_err(|_| Error::InvalidToml)?;
         validate(parsed)?;
 
-        let backup_path = if policy == SaveConflictPolicy::Overwrite
-            && current.as_deref() != self.original_bytes.as_deref()
-        {
+        let needs_backup = backup_first
+            || matches!(self.status, StoreStatus::Migratable(_))
+            || (policy == SaveConflictPolicy::Overwrite
+                && current.as_deref() != self.original_bytes.as_deref());
+        let backup_path = if needs_backup {
             if !target.exists() {
                 return Err(Error::Conflict);
             }
@@ -114,6 +207,7 @@ impl ConfigurationStore {
             .parse()
             .expect("saved configuration is TOML");
         self.configuration = Some(configuration.clone());
+        self.status = StoreStatus::Current;
         self.warnings = warnings.clone();
         Ok(SaveResult {
             backup_path,
@@ -126,6 +220,7 @@ impl ConfigurationStore {
         if let Some(original) = &self.original_bytes {
             let original_text = String::from_utf8_lossy(original);
             if let Some(existing) = &self.configuration
+                && matches!(self.status, StoreStatus::Current)
                 && files_match(&to_file(existing), &file)
             {
                 return Ok(original_text.into_owned());
@@ -145,6 +240,7 @@ impl ConfigurationStore {
     }
 }
 
+#[allow(dead_code)]
 pub fn load_from(path: &Path) -> Result<Configuration, Error> {
     ConfigurationStore::open_path(path)?
         .configuration
@@ -757,5 +853,140 @@ mode = "private"
             ConfigurationStore::open_path(&path),
             Err(Error::NotRegularFile)
         ));
+    }
+
+    fn fixture(name: &str) -> String {
+        fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/schema")
+                .join(name),
+        )
+        .expect("schema fixture should be readable")
+    }
+
+    #[test]
+    fn released_schema_fixture_loads_as_current() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("config.toml");
+        let source = fixture("v1.toml");
+        fs::write(&path, &source).unwrap();
+        let store = ConfigurationStore::inspect_path(&path).unwrap();
+        assert!(matches!(store.status, StoreStatus::Current));
+        let configuration = store.configuration.expect("v1 fixture should load");
+        assert_eq!(configuration.destinations[0].id, "work");
+        assert_eq!(fs::read_to_string(&path).unwrap(), source);
+    }
+
+    #[test]
+    fn newer_unknown_version_is_refused_without_modification() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("config.toml");
+        let source = "version = 2\nunknown_field = true\nsecret = \"https://user:pass@example.com/?q=token\"\ndestinations = []\n[fallback]\naction = \"show-picker\"\n";
+        fs::write(&path, source).unwrap();
+        let store = ConfigurationStore::inspect_path(&path).unwrap();
+        let StoreStatus::Invalid(error) = store.status else {
+            panic!("newer schema should be invalid");
+        };
+        assert!(matches!(error, Error::UnsupportedVersion(2)), "{error:?}");
+        let message = error.message();
+        assert!(message.contains("2"), "{message}");
+        assert!(!message.contains("https://"));
+        assert!(!message.contains("token"));
+        assert!(!message.contains("unknown_field"));
+        assert_eq!(fs::read_to_string(&path).unwrap(), source);
+        assert!(store.configuration.is_none());
+    }
+
+    #[test]
+    fn unknown_key_is_reported_without_rewriting_or_leaking_values() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("config.toml");
+        let source = "# keep\nversion = 1\n\n[[destinations]]\nid = \"work\"\nlabel = \"Work\"\n\n[destinations.application]\ntype = \"manual\"\nexecutable = \"/bin/true\"\nargs = [\"{target}\"]\ncommand = \"https://user:secret@example.com/path?q=1\"\n\n[fallback]\naction = \"show-picker\"\n";
+        fs::write(&path, source).unwrap();
+        let store = ConfigurationStore::inspect_path(&path).unwrap();
+        let StoreStatus::Invalid(error) = store.status else {
+            panic!("unknown key should be invalid");
+        };
+        let message = error.message();
+        assert!(message.contains("command"), "{message}");
+        assert!(message.contains("line"), "{message}");
+        assert!(!message.contains("https://"));
+        assert!(!message.contains("secret"));
+        assert_eq!(fs::read_to_string(&path).unwrap(), source);
+    }
+
+    #[test]
+    fn invalid_toml_and_semantic_errors_preserve_the_file() {
+        let dir = TempDir::new().unwrap();
+        let broken = dir.path().join("broken.toml");
+        let broken_source = "version = [\n";
+        fs::write(&broken, broken_source).unwrap();
+        let store = ConfigurationStore::inspect_path(&broken).unwrap();
+        assert!(matches!(
+            store.status,
+            StoreStatus::Invalid(Error::InvalidToml)
+        ));
+        assert_eq!(fs::read_to_string(&broken).unwrap(), broken_source);
+
+        let semantic = dir.path().join("semantic.toml");
+        let semantic_source = "version = 1\n\n[[destinations]]\nid = \"Not Stable\"\nlabel = \"Work\"\n\n[destinations.application]\ntype = \"manual\"\nexecutable = \"/bin/true\"\nargs = [\"{target}\"]\n\n[fallback]\naction = \"open\"\ndestination = \"Not Stable\"\n";
+        fs::write(&semantic, semantic_source).unwrap();
+        let store = ConfigurationStore::inspect_path(&semantic).unwrap();
+        let StoreStatus::Invalid(error) = store.status else {
+            panic!("semantic error should be invalid");
+        };
+        assert!(matches!(error, Error::InvalidId(_)));
+        assert_eq!(fs::read_to_string(&semantic).unwrap(), semantic_source);
+        assert!(store.configuration.is_none());
+    }
+
+    #[test]
+    fn old_schema_preview_does_not_write_until_confirmed_migration() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("config.toml");
+        let source = fixture("v0.toml");
+        fs::write(&path, &source).unwrap();
+        let mut store = ConfigurationStore::inspect_path(&path).unwrap();
+        let StoreStatus::Migratable(preview) = store.status.clone() else {
+            panic!("version 0 should be migratable");
+        };
+        assert_eq!(preview.from, 0);
+        assert_eq!(preview.to, 1);
+        assert!(preview.message().contains("0"));
+        assert!(preview.message().contains("1"));
+        assert!(!preview.message().contains("secret"));
+        assert!(!preview.message().contains("https://"));
+        assert_eq!(fs::read_to_string(&path).unwrap(), source);
+
+        let result = store.migrate().unwrap();
+        let backup = result.backup_path.expect("migration should backup");
+        assert_eq!(fs::read_to_string(&backup).unwrap(), source);
+        assert_eq!(
+            fs::metadata(&backup).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        let saved = fs::read_to_string(&path).unwrap();
+        assert!(saved.contains("version = 1"), "{saved}");
+        assert!(!saved.contains("version = 0"), "{saved}");
+        assert!(saved.contains("# Browser Picker configuration"), "{saved}");
+        assert!(saved.contains("value = \"secret\""), "{saved}");
+        assert!(matches!(store.status, StoreStatus::Current));
+    }
+
+    #[test]
+    fn migration_backup_failure_leaves_the_original_file_unchanged() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("config.toml");
+        let source = fixture("v0.toml");
+        fs::write(&path, &source).unwrap();
+        let mut store = ConfigurationStore::inspect_path(&path).unwrap();
+        fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o555)).unwrap();
+        let result = store.migrate();
+        fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(
+            matches!(result, Err(Error::Backup(ErrorKind::PermissionDenied))),
+            "{result:?}"
+        );
+        assert_eq!(fs::read_to_string(&path).unwrap(), source);
     }
 }

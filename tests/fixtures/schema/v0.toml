@@ -1,0 +1,36 @@
+# Browser Picker configuration
+version = 0
+
+[[destinations]]
+id = "work"
+label = "Work"
+profile_label = "Office"
+icon = "browser"
+
+[destinations.application]
+type = "manual"
+label = "True"
+executable = "/bin/true"
+args = ["{target}"]
+private_args = ["--private", "{target}"]
+
+[[rules]]
+id = "docs"
+name = "Docs"
+enabled = true
+
+[[rules.groups]]
+[[rules.groups.conditions]]
+type = "query-value"
+key = "q"
+value = "secret"
+
+[rules.action]
+type = "open"
+destination = "work"
+mode = "private"
+
+[fallback]
+action = "open"
+destination = "work"
+mode = "private"
