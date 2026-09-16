@@ -11,9 +11,75 @@ use crate::i18n;
 use crate::open_target::WebTarget;
 use crate::routing::RoutingEvaluation;
 
+#[derive(Clone, Copy)]
+#[repr(u32)]
+enum ConditionKind {
+    Scheme,
+    Host,
+    Port,
+    ExactPath,
+    PathPrefix,
+    QueryKey,
+    QueryValue,
+}
+
+impl ConditionKind {
+    const ALL: [Self; 7] = [
+        Self::Scheme,
+        Self::Host,
+        Self::Port,
+        Self::ExactPath,
+        Self::PathPrefix,
+        Self::QueryKey,
+        Self::QueryValue,
+    ];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Scheme => "Scheme",
+            Self::Host => "Host",
+            Self::Port => "Port",
+            Self::ExactPath => "Exact path",
+            Self::PathPrefix => "Path prefix",
+            Self::QueryKey => "Query key",
+            Self::QueryValue => "Query value",
+        }
+    }
+
+    fn labels() -> [&'static str; 7] {
+        Self::ALL.map(Self::label)
+    }
+
+    fn from_index(index: u32) -> Self {
+        Self::ALL
+            .get(index as usize)
+            .copied()
+            .unwrap_or(Self::QueryValue)
+    }
+
+    fn from_condition(condition: &UrlCondition) -> Self {
+        match condition {
+            UrlCondition::Scheme { .. } => Self::Scheme,
+            UrlCondition::Host { .. } => Self::Host,
+            UrlCondition::Port { .. } => Self::Port,
+            UrlCondition::Path {
+                comparison: PathComparison::Exact,
+                ..
+            } => Self::ExactPath,
+            UrlCondition::Path {
+                comparison: PathComparison::Prefix,
+                ..
+            } => Self::PathPrefix,
+            UrlCondition::QueryKey { .. } => Self::QueryKey,
+            UrlCondition::QueryValue { .. } => Self::QueryValue,
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct RoutingRuleEditor {
     pub root: gtk::Box,
+    pub sample: gtk::Entry,
     pub test: gtk::Button,
     pub explanation: gtk::Label,
     list: gtk::ListBox,
@@ -159,6 +225,12 @@ impl RoutingRuleEditor {
             move |_| reorder(&list, &rules, 1)
         ));
 
+        let sample = gtk::Entry::builder()
+            .text(target.map(WebTarget::as_str).unwrap_or_default())
+            .placeholder_text(i18n::text("Matching URL to test"))
+            .build();
+        sample.update_property(&[gtk::accessible::Property::Label("Matching URL to test")]);
+        root.append(&sample);
         let test = gtk::Button::with_label(&i18n::text("Test Rules"));
         test.update_property(&[gtk::accessible::Property::Label("Test Routing Rules")]);
         root.append(&test);
@@ -177,6 +249,7 @@ impl RoutingRuleEditor {
 
         Self {
             root,
+            sample,
             test,
             explanation,
             list,
@@ -369,61 +442,64 @@ fn build_group(group: ConditionGroup) -> (GroupWidgets, gtk::Box) {
 }
 
 fn build_condition(condition: UrlCondition) -> (ConditionWidgets, gtk::Box) {
-    let kind = dropdown(
-        &[
-            "Scheme",
-            "Host",
-            "Port",
-            "Exact path",
-            "Path prefix",
-            "Query key",
-            "Query value",
-        ],
-        "URL Condition type",
-    );
-    let (index, key_text, value_text, option_active, insensitive_active, negate_active) =
-        match condition {
-            UrlCondition::Scheme { value, negate } => {
-                (0, "".to_owned(), value, false, false, negate)
-            }
-            UrlCondition::Host {
-                value,
-                include_subdomains,
-                negate,
-            } => (1, "".to_owned(), value, include_subdomains, false, negate),
-            UrlCondition::Port { value, negate } => {
-                (2, "".to_owned(), value.to_string(), false, false, negate)
-            }
-            UrlCondition::Path {
-                value,
-                comparison,
-                case_insensitive,
-                negate,
-            } => (
-                if matches!(comparison, PathComparison::Exact) {
-                    3
-                } else {
-                    4
-                },
-                "".to_owned(),
-                value,
-                false,
-                case_insensitive,
-                negate,
-            ),
-            UrlCondition::QueryKey {
-                key,
-                case_insensitive,
-                negate,
-            } => (5, key, "".to_owned(), false, case_insensitive, negate),
-            UrlCondition::QueryValue {
-                key,
-                value,
-                case_insensitive,
-                negate,
-            } => (6, key, value, false, case_insensitive, negate),
-        };
-    kind.set_selected(index);
+    let labels = ConditionKind::labels();
+    let kind = dropdown(&labels, "URL Condition type");
+    let (key_text, value_text, option_active, insensitive_active, negate_active) = match &condition
+    {
+        UrlCondition::Scheme { value, negate } => {
+            ("".to_owned(), value.clone(), false, false, *negate)
+        }
+        UrlCondition::Host {
+            value,
+            include_subdomains,
+            negate,
+        } => (
+            "".to_owned(),
+            value.clone(),
+            *include_subdomains,
+            false,
+            *negate,
+        ),
+        UrlCondition::Port { value, negate } => {
+            ("".to_owned(), value.to_string(), false, false, *negate)
+        }
+        UrlCondition::Path {
+            value,
+            case_insensitive,
+            negate,
+            ..
+        } => (
+            "".to_owned(),
+            value.clone(),
+            false,
+            *case_insensitive,
+            *negate,
+        ),
+        UrlCondition::QueryKey {
+            key,
+            case_insensitive,
+            negate,
+        } => (
+            key.clone(),
+            "".to_owned(),
+            false,
+            *case_insensitive,
+            *negate,
+        ),
+        UrlCondition::QueryValue {
+            key,
+            value,
+            case_insensitive,
+            negate,
+        } => (
+            key.clone(),
+            value.clone(),
+            false,
+            *case_insensitive,
+            *negate,
+        ),
+    };
+    kind.set_selected(ConditionKind::from_condition(&condition) as u32);
     let key = entry(&key_text, "URL Condition query key");
     let value = entry(&value_text, "URL Condition value");
     let option = gtk::CheckButton::with_label(&i18n::text("Include subdomains"));
@@ -489,33 +565,35 @@ fn collect_condition(condition: &ConditionWidgets) -> UrlCondition {
     let value = condition.value.text().to_string();
     let negate = condition.negate.is_active();
     let case_insensitive = condition.insensitive.is_active();
-    match condition.kind.selected() {
-        0 => UrlCondition::Scheme { value, negate },
-        1 => UrlCondition::Host {
+    match ConditionKind::from_index(condition.kind.selected()) {
+        ConditionKind::Scheme => UrlCondition::Scheme { value, negate },
+        ConditionKind::Host => UrlCondition::Host {
             value,
             include_subdomains: condition.option.is_active(),
             negate,
         },
-        2 => UrlCondition::Port {
+        ConditionKind::Port => UrlCondition::Port {
             value: value.parse().unwrap_or(0),
             negate,
         },
-        3 | 4 => UrlCondition::Path {
+        ConditionKind::ExactPath => UrlCondition::Path {
             value,
-            comparison: if condition.kind.selected() == 3 {
-                PathComparison::Exact
-            } else {
-                PathComparison::Prefix
-            },
+            comparison: PathComparison::Exact,
             case_insensitive,
             negate,
         },
-        5 => UrlCondition::QueryKey {
+        ConditionKind::PathPrefix => UrlCondition::Path {
+            value,
+            comparison: PathComparison::Prefix,
+            case_insensitive,
+            negate,
+        },
+        ConditionKind::QueryKey => UrlCondition::QueryKey {
             key,
             case_insensitive,
             negate,
         },
-        _ => UrlCondition::QueryValue {
+        ConditionKind::QueryValue => UrlCondition::QueryValue {
             key,
             value,
             case_insensitive,

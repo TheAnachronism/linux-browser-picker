@@ -32,8 +32,17 @@ impl WebTarget {
         if !matches!(parsed.scheme(), "http" | "https") {
             return Err(Error::UnsupportedScheme);
         }
-        let ascii_host = parsed.host_str().ok_or(Error::Malformed)?.to_lowercase();
+        let host_str = parsed.host_str().ok_or(Error::Malformed)?.to_lowercase();
+        let ascii_host = match parsed.host() {
+            Some(url::Host::Ipv6(_)) => host_str
+                .trim_start_matches('[')
+                .trim_end_matches(']')
+                .to_owned(),
+            _ => host_str,
+        };
         let (unicode_host, _) = idna::domain_to_unicode(&ascii_host);
+        // Keep path, query, fragment, and userinfo from the original spelling. url::Url
+        // inserts "/" for an empty path and is not the Matching URL source of truth.
         let scheme_end = original.find(':').ok_or(Error::Malformed)?;
         let authority_start = scheme_end.checked_add(3).ok_or(Error::Malformed)?;
         if original.get(scheme_end..authority_start) != Some("://") {

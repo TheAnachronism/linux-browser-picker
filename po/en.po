@@ -392,3 +392,5 @@ msgstr "URL Condition query key"
 
 msgid "URL Condition value"
 msgstr "URL Condition value"
+msgid "Matching URL to test"
+msgstr "Matching URL to test"

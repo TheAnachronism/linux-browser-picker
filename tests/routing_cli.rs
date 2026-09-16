@@ -715,3 +715,31 @@ fn preselection_does_not_dispatch_automatically() {
     let _ = child.kill();
     let _ = child.wait();
 }
+
+#[test]
+fn ipv6_literal_host_matches_without_double_brackets() {
+    let config_home = TempDir::new().expect("temporary configuration home should be created");
+    let executable = install_fake_browser(&config_home);
+    write_raw_config(
+        &config_home,
+        &format!(
+            "version = 1\n\n[[destinations]]\nid = \"controlled\"\nlabel = \"Controlled Browser\"\n\n[destinations.application]\ntype = \"manual\"\nexecutable = \"{}\"\nargs = [\"--ipv6\", \"{{target}}\"]\n\n[[rules]]\nid = \"loopback\"\nname = \"IPv6 loopback\"\nenabled = true\n\n[rules.action]\ntype = \"open\"\ndestination = \"controlled\"\n\n[[rules.groups]]\n\n[[rules.groups.conditions]]\ntype = \"host\"\nvalue = \"::1\"\n\n[fallback]\naction = \"show-picker\"\n",
+            executable.display()
+        ),
+    );
+    let received = config_home.path().join("received-argv");
+    let target = "http://[::1]/Path";
+
+    let output = browser_picker(&config_home)
+        .env("BROWSER_PICKER_TEST_OUTPUT", &received)
+        .arg(target)
+        .output()
+        .expect("Browser Picker should start");
+
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(wait_for_file(&received), format!("--ipv6\n{target}\n"));
+}

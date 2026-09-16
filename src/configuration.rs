@@ -466,13 +466,20 @@ fn validate_rule(
                     }
                 }
                 UrlCondition::Host { value, .. } => {
-                    let ascii = idna::domain_to_ascii(value)
-                        .map_err(|_| Error::InvalidRuleHost(rule.id.clone()))?
-                        .to_ascii_lowercase();
-                    if ascii.is_empty() || url::Host::parse(&ascii).is_err() {
-                        return Err(Error::InvalidRuleHost(rule.id));
-                    }
-                    *value = ascii;
+                    let candidate = value.trim().trim_start_matches('[').trim_end_matches(']');
+                    *value = if let Ok(address) = candidate.parse::<std::net::Ipv6Addr>() {
+                        address.to_string()
+                    } else if let Ok(address) = candidate.parse::<std::net::Ipv4Addr>() {
+                        address.to_string()
+                    } else {
+                        let ascii = idna::domain_to_ascii(candidate)
+                            .map_err(|_| Error::InvalidRuleHost(rule.id.clone()))?
+                            .to_ascii_lowercase();
+                        if ascii.is_empty() || url::Host::parse(&ascii).is_err() {
+                            return Err(Error::InvalidRuleHost(rule.id));
+                        }
+                        ascii
+                    };
                 }
                 _ => {}
             }

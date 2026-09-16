@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 use std::collections::HashSet;
+use std::ffi::OsStr;
 use std::rc::Rc;
 
 use adw::prelude::*;
@@ -13,6 +14,7 @@ use crate::configuration::{
 };
 use crate::discovery::{self, BrowserCandidate};
 use crate::i18n;
+use crate::open_target::WebTarget;
 use crate::routing;
 use crate::routing_editor::{self, RoutingRuleEditor};
 
@@ -170,6 +172,7 @@ pub fn present(
         .visible(false)
         .build();
     error.add_css_class("error");
+    error.set_focusable(true);
     error.update_property(&[gtk::accessible::Property::Description(
         "Browser Picker configuration error",
     )]);
@@ -252,15 +255,26 @@ pub fn present(
         items,
         #[strong]
         rule_editor,
-        #[strong]
-        current_target,
         move || {
-            let Some(target) = current_target.as_ref() else {
+            let sample = rule_editor.sample.text();
+            if sample.is_empty() {
+                rule_editor
+                    .explanation
+                    .set_label(&i18n::text("Open an URL to test Routing Rules."));
                 return;
+            }
+            let target = match WebTarget::parse(OsStr::new(sample.as_str())) {
+                Ok(target) => target,
+                Err(_) => {
+                    rule_editor.explanation.set_label(&i18n::text(
+                        "Invalid Open Target: expected an absolute HTTP or HTTPS URL",
+                    ));
+                    return;
+                }
             };
             match collect_configuration(&items.borrow(), &rule_editor.rules(), &fallback) {
                 Ok(configuration) => {
-                    let evaluation = routing::evaluate(&configuration, target);
+                    let evaluation = routing::evaluate(&configuration, &target);
                     rule_editor
                         .explanation
                         .set_label(&routing_editor::explanation_text(&evaluation));
@@ -276,60 +290,42 @@ pub fn present(
         move |_| explain()
     ));
 
-    move_up.connect_clicked(glib::clone!(
-        #[weak]
-        list,
-        #[strong]
-        items,
-        #[strong]
-        refresh_fallback,
-        move |_| {
-            reorder(&list, &items, -1);
-            refresh_fallback();
-        }
-    ));
-    move_down.connect_clicked(glib::clone!(
-        #[weak]
-        list,
-        #[strong]
-        items,
-        #[strong]
-        refresh_fallback,
-        move |_| {
-            reorder(&list, &items, 1);
-            refresh_fallback();
-        }
-    ));
+    let move_destination = |direction: isize| {
+        glib::clone!(
+            #[weak]
+            list,
+            #[strong]
+            items,
+            #[strong]
+            refresh_fallback,
+            move |_: &gio::SimpleAction, _: Option<&glib::Variant>| {
+                reorder(&list, &items, direction);
+                refresh_fallback();
+            }
+        )
+    };
     let move_destination_up = gio::SimpleAction::new("move-destination-up", None);
-    move_destination_up.connect_activate(glib::clone!(
-        #[weak]
-        list,
-        #[strong]
-        items,
-        #[strong]
-        refresh_fallback,
-        move |_, _| {
-            reorder(&list, &items, -1);
-            refresh_fallback();
-        }
-    ));
+    move_destination_up.connect_activate(move_destination(-1));
     window.add_action(&move_destination_up);
     application.set_accels_for_action("win.move-destination-up", &["<Alt><Shift>Up"]);
     let move_destination_down = gio::SimpleAction::new("move-destination-down", None);
-    move_destination_down.connect_activate(glib::clone!(
-        #[weak]
-        list,
-        #[strong]
-        items,
-        #[strong]
-        refresh_fallback,
-        move |_, _| {
-            reorder(&list, &items, 1);
-            refresh_fallback();
-        }
-    ));
+    move_destination_down.connect_activate(move_destination(1));
     window.add_action(&move_destination_down);
     application.set_accels_for_action("win.move-destination-down", &["<Alt><Shift>Down"]);
+    move_up.connect_clicked(glib::clone!(
+        #[strong]
+        move_destination_up,
+        move |_| {
+            move_destination_up.activate(None);
+        }
+    ));
+    move_down.connect_clicked(glib::clone!(
+        #[strong]
+        move_destination_down,
+        move |_| {
+            move_destination_down.activate(None);
+        }
+    ));
 
     save.connect_clicked(glib::clone!(
         #[weak]
