@@ -390,3 +390,41 @@ msgstr ""
 
 msgid "Reveals the absolute local file path for copying"
 msgstr ""
+
+msgid "private Launch Mode is not available"
+msgstr ""
+
+msgid "Profile destination '{id}' must persist a native profile identity"
+msgstr ""
+
+msgid "Browser Profile is not available"
+msgstr ""
+
+msgid "Refresh Browser Profiles"
+msgstr ""
+
+msgid "Family assumptions must be valid before a profiled destination can be enabled"
+msgstr ""
+
+msgid "Family assumptions for this Browser Profile"
+msgstr ""
+
+msgid "Browser Application is not installed. This profile cannot be enabled as a verified destination."
+msgstr ""
+
+msgid "Unknown packaging or unsupported capability. This remains a generic Browser Application rather than a verified profile destination."
+msgstr ""
+
+msgid "Private Launch Mode uses the browser-native private or incognito context. It does not promise a separate process, an isolated profile, or the absence of disk traces."
+msgstr ""
+
+msgid "Private Launch Mode privacy boundary"
+msgstr ""
+
+msgid ""
+"{product} family\n"
+"Executable: {executable}\n"
+"Profile: {profile}\n"
+"Private flag: {flag}\n"
+"Launch reuses the existing browser process for this profile. Browser Picker will not create, rename, delete, clone, or repair it."
+msgstr ""

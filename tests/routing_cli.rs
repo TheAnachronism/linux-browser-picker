@@ -1,4 +1,5 @@
 use std::fs;
+use std::ops::Not;
 use std::os::unix::fs::PermissionsExt;
 use std::process::Command;
 use std::thread;
@@ -1253,4 +1254,155 @@ fn directories_missing_paths_fifos_and_remote_file_uris_are_rejected() {
             );
         }
     }
+}
+
+fn install_family_desktop(
+    config_home: &TempDir,
+    desktop_id: &str,
+    name: &str,
+    executable: &std::path::Path,
+) -> std::path::PathBuf {
+    let data_home = config_home.path().join("xdg-data");
+    let applications = data_home.join("applications");
+    fs::create_dir_all(&applications).expect("application registry should be writable");
+    fs::write(
+        applications.join(desktop_id),
+        format!(
+            "[Desktop Entry]\nType=Application\nName={name}\nExec={} %u\nMimeType=x-scheme-handler/http;x-scheme-handler/https;\nTerminal=false\n",
+            executable.display()
+        ),
+    )
+    .expect("desktop file should be writable");
+    fs::write(
+        applications.join("mimeinfo.cache"),
+        format!(
+            "[MIME Cache]\nx-scheme-handler/http={desktop_id};\nx-scheme-handler/https={desktop_id};\n"
+        ),
+    )
+    .expect("MIME cache should be writable");
+    data_home
+}
+
+#[test]
+fn firefox_profile_destination_launches_with_profile_path_and_private_flag() {
+    let config_home = TempDir::new().expect("temporary configuration home should be created");
+    let executable = install_fake_browser(&config_home);
+    let data_home = install_family_desktop(&config_home, "firefox.desktop", "Firefox", &executable);
+    let profile = config_home.path().join("work-profile");
+    fs::create_dir(&profile).expect("Firefox profile should exist");
+    write_raw_config(
+        &config_home,
+        &format!(
+            "version = 1\n\n[[destinations]]\nid = \"firefox-work\"\nlabel = \"Work Firefox\"\nprofile_label = \"Work\"\n\n[destinations.application]\ntype = \"firefox-profile\"\ndesktop_id = \"firefox.desktop\"\nname = \"Work\"\npath = \"{}\"\n\n[[rules]]\nid = \"private-work\"\nname = \"Private work\"\nenabled = true\n\n[rules.action]\ntype = \"open\"\ndestination = \"firefox-work\"\nmode = \"private\"\n\n[[rules.groups]]\n\n[[rules.groups.conditions]]\ntype = \"host\"\nvalue = \"work.example\"\n\n[fallback]\naction = \"show-picker\"\n",
+            profile.display()
+        ),
+    );
+    let received = config_home.path().join("received-argv");
+    let target = "https://work.example/mail";
+
+    let output = browser_picker(&config_home)
+        .env("XDG_DATA_HOME", &data_home)
+        .env("XDG_DATA_DIRS", &data_home)
+        .env("BROWSER_PICKER_TEST_OUTPUT", &received)
+        .arg(target)
+        .output()
+        .expect("Browser Picker should start");
+
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        wait_for_file(&received),
+        format!(
+            "--profile\n{}\n--private-window\n{target}\n",
+            profile.display()
+        )
+    );
+}
+
+#[test]
+fn chromium_profile_destination_launches_with_user_data_root_and_profile_id() {
+    let config_home = TempDir::new().expect("temporary configuration home should be created");
+    let executable = install_fake_browser(&config_home);
+    let data_home =
+        install_family_desktop(&config_home, "chromium.desktop", "Chromium", &executable);
+    let user_data = config_home.path().join("chromium-data");
+    fs::create_dir_all(user_data.join("Profile 1")).expect("Chromium profile should exist");
+    write_raw_config(
+        &config_home,
+        &format!(
+            "version = 1\n\n[[destinations]]\nid = \"chromium-work\"\nlabel = \"Work Chromium\"\nprofile_label = \"Work\"\n\n[destinations.application]\ntype = \"chromium-profile\"\ndesktop_id = \"chromium.desktop\"\nuser_data_dir = \"{}\"\nprofile_directory = \"Profile 1\"\n\n[fallback]\naction = \"open\"\ndestination = \"chromium-work\"\n",
+            user_data.display()
+        ),
+    );
+    let received = config_home.path().join("received-argv");
+    let target = "https://example.com/chromium";
+
+    let output = browser_picker(&config_home)
+        .env("XDG_DATA_HOME", &data_home)
+        .env("XDG_DATA_DIRS", &data_home)
+        .env("BROWSER_PICKER_TEST_OUTPUT", &received)
+        .arg(target)
+        .output()
+        .expect("Browser Picker should start");
+
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        wait_for_file(&received),
+        format!(
+            "--user-data-dir\n{}\n--profile-directory\nProfile 1\n{target}\n",
+            user_data.display()
+        )
+    );
+}
+
+#[test]
+fn lost_private_capability_keeps_configuration_and_does_not_downgrade() {
+    let config_home = TempDir::new().expect("temporary configuration home should be created");
+    let snap_bin = config_home.path().join("snap/bin");
+    fs::create_dir_all(&snap_bin).expect("snap path should be writable");
+    let executable = snap_bin.join("firefox");
+    fs::write(
+        &executable,
+        "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$BROWSER_PICKER_TEST_OUTPUT\"\n",
+    )
+    .expect("sandboxed browser should be writable");
+    fs::set_permissions(&executable, fs::Permissions::from_mode(0o700))
+        .expect("sandboxed browser should be executable");
+    let data_home = install_family_desktop(&config_home, "firefox.desktop", "Firefox", &executable);
+    let profile = config_home.path().join("work-profile");
+    fs::create_dir(&profile).expect("Firefox profile should exist");
+    write_raw_config(
+        &config_home,
+        &format!(
+            "version = 1\n\n[[destinations]]\nid = \"firefox-work\"\nlabel = \"Work Firefox\"\nprofile_label = \"Work\"\n\n[destinations.application]\ntype = \"firefox-profile\"\ndesktop_id = \"firefox.desktop\"\nname = \"Work\"\npath = \"{}\"\n\n[[rules]]\nid = \"private-work\"\nname = \"Private work\"\nenabled = true\n\n[rules.action]\ntype = \"open\"\ndestination = \"firefox-work\"\nmode = \"private\"\n\n[[rules.groups]]\n\n[[rules.groups.conditions]]\ntype = \"host\"\nvalue = \"work.example\"\n\n[fallback]\naction = \"show-picker\"\n",
+            profile.display()
+        ),
+    );
+    let received = config_home.path().join("received-argv");
+
+    let output = browser_picker(&config_home)
+        .env("XDG_DATA_HOME", &data_home)
+        .env("XDG_DATA_DIRS", &data_home)
+        .env("BROWSER_PICKER_TEST_OUTPUT", &received)
+        .arg("https://work.example/mail")
+        .output()
+        .expect("Browser Picker should start");
+
+    assert_eq!(output.status.code(), Some(4));
+    assert!(
+        received.exists().not(),
+        "private Launch Mode must not downgrade to a normal launch"
+    );
+    let stderr = String::from_utf8(output.stderr).expect("error output should be UTF-8");
+    assert_eq!(
+        stderr,
+        "Browser Destination 'firefox-work' could not accept dispatch: private Launch Mode is not available\n"
+    );
 }

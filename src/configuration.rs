@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::discovery;
 use crate::i18n;
+use crate::profiles::{self, ProfileIdentity};
 
 #[derive(Clone, Debug)]
 pub struct BrowserDestination {
@@ -30,6 +31,45 @@ pub enum DestinationLaunch {
     Discovered {
         desktop_id: String,
     },
+    FirefoxProfile {
+        desktop_id: String,
+        name: String,
+        path: String,
+    },
+    ChromiumProfile {
+        desktop_id: String,
+        user_data_dir: String,
+        profile_directory: String,
+    },
+}
+
+impl DestinationLaunch {
+    pub fn desktop_id(&self) -> Option<&str> {
+        match self {
+            Self::Discovered { desktop_id }
+            | Self::FirefoxProfile { desktop_id, .. }
+            | Self::ChromiumProfile { desktop_id, .. } => Some(desktop_id),
+            Self::Manual { .. } => None,
+        }
+    }
+
+    pub fn profile_identity(&self) -> Option<ProfileIdentity> {
+        match self {
+            Self::FirefoxProfile { name, path, .. } => Some(ProfileIdentity::Firefox {
+                name: name.clone(),
+                path: path.into(),
+            }),
+            Self::ChromiumProfile {
+                user_data_dir,
+                profile_directory,
+                ..
+            } => Some(ProfileIdentity::Chromium {
+                user_data_dir: user_data_dir.into(),
+                profile_directory: profile_directory.clone(),
+            }),
+            Self::Manual { .. } | Self::Discovered { .. } => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -180,17 +220,28 @@ pub enum Error {
     InvalidTargetTemplate(String),
     InvalidPrivateTargetTemplate(String),
     InvalidDesktopId(String),
+    InvalidProfileIdentity(String),
 }
 
 impl BrowserDestination {
     pub fn supports_private(&self) -> bool {
-        matches!(
-            self.launch,
+        match &self.launch {
             DestinationLaunch::Manual {
                 private_arguments: Some(_),
                 ..
             }
-        )
+            | DestinationLaunch::FirefoxProfile { .. }
+            | DestinationLaunch::ChromiumProfile { .. } => true,
+            DestinationLaunch::Manual {
+                private_arguments: None,
+                ..
+            }
+            | DestinationLaunch::Discovered { .. } => false,
+        }
+    }
+
+    pub fn desktop_id(&self) -> Option<&str> {
+        self.launch.desktop_id()
     }
 
     pub fn is_available(&self) -> bool {
@@ -302,6 +353,10 @@ impl Error {
                 "Discovered destination '{id}' must have a desktop application ID",
                 &[("{id}", id)],
             ),
+            Self::InvalidProfileIdentity(id) => i18n::text_with(
+                "Profile destination '{id}' must persist a native profile identity",
+                &[("{id}", id)],
+            ),
         }
     }
 }
@@ -316,7 +371,7 @@ struct ConfigFile {
     rules: Vec<RoutingRule>,
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct DestinationFile {
     id: String,
@@ -328,7 +383,7 @@ struct DestinationFile {
     application: ApplicationFile,
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "lowercase", deny_unknown_fields)]
 enum ApplicationFile {
     Manual {
@@ -341,6 +396,18 @@ enum ApplicationFile {
     },
     Discovered {
         desktop_id: String,
+    },
+    #[serde(rename = "firefox-profile")]
+    FirefoxProfile {
+        desktop_id: String,
+        name: String,
+        path: String,
+    },
+    #[serde(rename = "chromium-profile")]
+    ChromiumProfile {
+        desktop_id: String,
+        user_data_dir: String,
+        profile_directory: String,
     },
 }
 
@@ -536,9 +603,16 @@ fn validate_rule(
 }
 
 fn validate_destination(destination: DestinationFile) -> Result<BrowserDestination, Error> {
-    match destination.application {
+    let DestinationFile {
+        id,
+        label,
+        profile_label,
+        icon,
+        application,
+    } = destination;
+    match application {
         ApplicationFile::Manual {
-            label,
+            label: application_name,
             executable,
             args,
             private_args,
@@ -546,16 +620,15 @@ fn validate_destination(destination: DestinationFile) -> Result<BrowserDestinati
             let path = Path::new(&executable);
             let bare_name = !executable.is_empty() && !executable.contains('/');
             if !path.is_absolute() && !bare_name {
-                return Err(Error::InvalidExecutable(destination.id));
+                return Err(Error::InvalidExecutable(id));
             }
-            validate_arguments(&args)
-                .map_err(|()| Error::InvalidTargetTemplate(destination.id.clone()))?;
+            validate_arguments(&args).map_err(|()| Error::InvalidTargetTemplate(id.clone()))?;
             if let Some(arguments) = &private_args {
                 validate_arguments(arguments)
-                    .map_err(|()| Error::InvalidPrivateTargetTemplate(destination.id.clone()))?;
+                    .map_err(|()| Error::InvalidPrivateTargetTemplate(id.clone()))?;
             }
 
-            let application_label = label.unwrap_or_else(|| {
+            let application_label = application_name.unwrap_or_else(|| {
                 path.file_name()
                     .and_then(|name| name.to_str())
                     .unwrap_or(&executable)
@@ -568,17 +641,17 @@ fn validate_destination(destination: DestinationFile) -> Result<BrowserDestinati
             };
             Ok(BrowserDestination {
                 unavailable_reason: manual_unavailability(&executable),
-                id: destination.id,
-                label: destination.label,
+                id,
+                label,
                 application_label,
-                profile_label: destination.profile_label,
-                icon_name: destination.icon,
+                profile_label,
+                icon_name: icon,
                 launch,
             })
         }
         ApplicationFile::Discovered { desktop_id } => {
             if desktop_id.trim().is_empty() {
-                return Err(Error::InvalidDesktopId(destination.id));
+                return Err(Error::InvalidDesktopId(id));
             }
             let application_label = discovery::app_info(&desktop_id)
                 .map(|application| application.display_name().to_string())
@@ -589,15 +662,121 @@ fn validate_destination(destination: DestinationFile) -> Result<BrowserDestinati
                 None
             };
             Ok(BrowserDestination {
-                id: destination.id,
-                label: destination.label,
+                id,
+                label,
                 application_label,
-                profile_label: destination.profile_label,
-                icon_name: destination.icon,
+                profile_label,
+                icon_name: icon,
                 launch: DestinationLaunch::Discovered { desktop_id },
                 unavailable_reason,
             })
         }
+        ApplicationFile::FirefoxProfile {
+            desktop_id,
+            name,
+            path,
+        } => {
+            if desktop_id.trim().is_empty() {
+                return Err(Error::InvalidDesktopId(id));
+            }
+            if name.trim().is_empty() || path.trim().is_empty() || !Path::new(&path).is_absolute() {
+                return Err(Error::InvalidProfileIdentity(id));
+            }
+            let identity = ProfileIdentity::Firefox {
+                name: name.clone(),
+                path: PathBuf::from(&path),
+            };
+            Ok(profile_destination(
+                id,
+                label,
+                profile_label,
+                icon,
+                desktop_id.clone(),
+                DestinationLaunch::FirefoxProfile {
+                    desktop_id,
+                    name,
+                    path,
+                },
+                &identity,
+            ))
+        }
+        ApplicationFile::ChromiumProfile {
+            desktop_id,
+            user_data_dir,
+            profile_directory,
+        } => {
+            if desktop_id.trim().is_empty() {
+                return Err(Error::InvalidDesktopId(id));
+            }
+            if user_data_dir.trim().is_empty()
+                || profile_directory.trim().is_empty()
+                || !Path::new(&user_data_dir).is_absolute()
+            {
+                return Err(Error::InvalidProfileIdentity(id));
+            }
+            let identity = ProfileIdentity::Chromium {
+                user_data_dir: PathBuf::from(&user_data_dir),
+                profile_directory: profile_directory.clone(),
+            };
+            Ok(profile_destination(
+                id,
+                label,
+                profile_label,
+                icon,
+                desktop_id.clone(),
+                DestinationLaunch::ChromiumProfile {
+                    desktop_id,
+                    user_data_dir,
+                    profile_directory,
+                },
+                &identity,
+            ))
+        }
+    }
+}
+
+fn profile_destination(
+    id: String,
+    label: String,
+    profile_label: Option<String>,
+    icon: Option<String>,
+    desktop_id: String,
+    launch: DestinationLaunch,
+    identity: &ProfileIdentity,
+) -> BrowserDestination {
+    let application_label = discovery::app_info(&desktop_id)
+        .map(|application| application.display_name().to_string())
+        .unwrap_or_else(|| desktop_id.clone());
+    BrowserDestination {
+        id,
+        label,
+        application_label,
+        profile_label,
+        icon_name: icon,
+        launch,
+        unavailable_reason: profile_unavailability(&desktop_id, identity),
+    }
+}
+
+fn profile_unavailability(desktop_id: &str, identity: &ProfileIdentity) -> Option<String> {
+    let application = discovery::app_info(desktop_id);
+    let executable = application.as_ref().map(AppInfoExt::executable);
+    match profiles::capability(
+        desktop_id,
+        executable.as_deref(),
+        identity,
+        &profiles::DiscoveryPaths::from_env(),
+    ) {
+        profiles::ProfileCapability::Verified => None,
+        profiles::ProfileCapability::MissingApplication => {
+            Some(i18n::text("Browser Application is not installed"))
+        }
+        profiles::ProfileCapability::MissingProfile => {
+            Some(i18n::text("Browser Profile is not available"))
+        }
+        profiles::ProfileCapability::UnsupportedPackaging => Some(i18n::text(
+            "Unknown packaging or unsupported capability. This remains a generic Browser Application rather than a verified profile destination.",
+        )),
     }
 }
 
@@ -667,6 +846,24 @@ fn to_file(configuration: &Configuration) -> ConfigFile {
                     },
                     DestinationLaunch::Discovered { desktop_id } => ApplicationFile::Discovered {
                         desktop_id: desktop_id.clone(),
+                    },
+                    DestinationLaunch::FirefoxProfile {
+                        desktop_id,
+                        name,
+                        path,
+                    } => ApplicationFile::FirefoxProfile {
+                        desktop_id: desktop_id.clone(),
+                        name: name.clone(),
+                        path: path.clone(),
+                    },
+                    DestinationLaunch::ChromiumProfile {
+                        desktop_id,
+                        user_data_dir,
+                        profile_directory,
+                    } => ApplicationFile::ChromiumProfile {
+                        desktop_id: desktop_id.clone(),
+                        user_data_dir: user_data_dir.clone(),
+                        profile_directory: profile_directory.clone(),
                     },
                 },
             })

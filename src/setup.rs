@@ -15,6 +15,7 @@ use crate::configuration::{
 use crate::discovery::{self, BrowserCandidate};
 use crate::i18n;
 use crate::open_target::OpenTarget;
+use crate::profiles::{self, ProfileIdentity};
 use crate::routing;
 use crate::routing_editor::{self, RoutingRuleEditor};
 
@@ -24,6 +25,7 @@ struct EditorItem {
     application_label: String,
     profile_label: Option<String>,
     enabled: gtk::CheckButton,
+    enable_allowed: bool,
     id: gtk::Entry,
     label: gtk::Entry,
     icon: gtk::Entry,
@@ -46,7 +48,8 @@ pub fn present(
     }
 
     let discovery = discovery::discover();
-    let items = Rc::new(RefCell::new(editor_items(&existing, &discovery.ordinary)));
+    let ordinary = discovery.ordinary.clone();
+    let items = Rc::new(RefCell::new(editor_items(&existing, &ordinary)));
     let current_target = session
         .pending
         .borrow()
@@ -130,6 +133,9 @@ pub fn present(
     ]);
     order.append(&move_up);
     order.append(&move_down);
+    let refresh = gtk::Button::with_label(&i18n::text("Refresh Browser Profiles"));
+    refresh.update_property(&[gtk::accessible::Property::Label("Refresh Browser Profiles")]);
+    order.append(&refresh);
     content.append(&order);
     content.append(&rule_editor.root);
 
@@ -333,6 +339,21 @@ pub fn present(
         }
     ));
 
+    refresh.connect_clicked(glib::clone!(
+        #[weak]
+        list,
+        #[strong]
+        items,
+        #[strong]
+        ordinary,
+        #[strong]
+        refresh_fallback,
+        move |_| {
+            refresh_profiles(&list, &items, &ordinary);
+            refresh_fallback();
+        }
+    ));
+
     save.connect_clicked(glib::clone!(
         #[weak]
         application,
@@ -488,6 +509,7 @@ fn editor_items(
     let mut used_ids = HashSet::new();
     let mut items = Vec::new();
     let mut configured_desktop_ids = HashSet::new();
+    let mut configured_profiles = HashSet::new();
 
     if let Some(configuration) = existing {
         for destination in &configuration.destinations {
@@ -495,24 +517,95 @@ fn editor_items(
             if let DestinationLaunch::Discovered { desktop_id } = &destination.launch {
                 configured_desktop_ids.insert(desktop_id.clone());
             }
+            if let Some(key) = profile_key(&destination.launch) {
+                configured_profiles.insert(key);
+            }
             items.push(item_from_destination(destination));
         }
     }
 
     for candidate in ordinary {
-        if configured_desktop_ids.contains(&candidate.desktop_id) {
-            continue;
+        if !configured_desktop_ids.contains(&candidate.desktop_id) {
+            let slug = discovery::unique_slug(
+                &discovery::suggested_slug(&candidate.desktop_id),
+                &mut used_ids,
+            );
+            items.push(item_from_candidate(candidate, slug));
         }
-        let slug = discovery::unique_slug(
-            &discovery::suggested_slug(&candidate.desktop_id),
-            &mut used_ids,
-        );
-        items.push(item_from_candidate(candidate, slug));
+        append_profile_candidates(candidate, &mut items, &mut used_ids, &configured_profiles);
     }
     items
 }
 
+fn refresh_profiles(
+    list: &gtk::ListBox,
+    items: &Rc<RefCell<Vec<EditorItem>>>,
+    ordinary: &[BrowserCandidate],
+) {
+    let mut items = items.borrow_mut();
+    let mut used_ids: HashSet<String> = items
+        .iter()
+        .map(|item| item.id.text().to_string())
+        .collect();
+    let configured_profiles: HashSet<_> = items
+        .iter()
+        .filter_map(|item| profile_key(&item.launch))
+        .collect();
+    let start = items.len();
+    for candidate in ordinary {
+        append_profile_candidates(candidate, &mut items, &mut used_ids, &configured_profiles);
+    }
+    for item in items.iter().skip(start) {
+        list.append(&item.row);
+    }
+}
+
+fn append_profile_candidates(
+    candidate: &BrowserCandidate,
+    items: &mut Vec<EditorItem>,
+    used_ids: &mut HashSet<String>,
+    configured_profiles: &HashSet<(String, ProfileIdentity)>,
+) {
+    let Some(application) = discovery::app_info(&candidate.desktop_id) else {
+        return;
+    };
+    let executable = gtk::gio::prelude::AppInfoExt::executable(&application);
+    let Some(assumptions) = profiles::classify(
+        &candidate.desktop_id,
+        &executable,
+        &profiles::DiscoveryPaths::from_env(),
+    ) else {
+        return;
+    };
+    for profile in profiles::discover(&assumptions) {
+        let key = identity_key(&candidate.desktop_id, &profile.identity);
+        if configured_profiles.contains(&key) {
+            continue;
+        }
+        let slug_base = format!(
+            "{}-{}",
+            discovery::suggested_slug(&candidate.desktop_id),
+            discovery::suggested_slug(&profile.display_name)
+        );
+        let slug = discovery::unique_slug(&slug_base, used_ids);
+        let label = format!("{} — {}", candidate.name, profile.display_name);
+        items.push(item_from_profile(
+            candidate,
+            slug,
+            label,
+            profile.display_name,
+            launch_from_identity(&candidate.desktop_id, profile.identity.clone()),
+            &profile.identity,
+        ));
+    }
+}
+
 fn item_from_destination(destination: &BrowserDestination) -> EditorItem {
+    let identity = destination.launch.profile_identity();
+    let (assumptions, enable_allowed) = match (destination.desktop_id(), identity.as_ref()) {
+        (Some(desktop_id), Some(identity)) => assumptions_for(desktop_id, identity),
+        _ => (None, true),
+    };
     build_item(
         destination.launch.clone(),
         destination.application_label.clone(),
@@ -523,6 +616,8 @@ fn item_from_destination(destination: &BrowserDestination) -> EditorItem {
         destination.icon_name.as_deref().unwrap_or(""),
         &destination.label,
         None,
+        assumptions,
+        enable_allowed,
     )
 }
 
@@ -539,6 +634,32 @@ fn item_from_candidate(candidate: &BrowserCandidate, slug: String) -> EditorItem
         "",
         &candidate.name,
         candidate.icon.clone(),
+        None,
+        true,
+    )
+}
+
+fn item_from_profile(
+    candidate: &BrowserCandidate,
+    slug: String,
+    label: String,
+    profile_label: String,
+    launch: DestinationLaunch,
+    identity: &ProfileIdentity,
+) -> EditorItem {
+    let (assumptions, enable_allowed) = assumptions_for(&candidate.desktop_id, identity);
+    build_item(
+        launch,
+        candidate.name.clone(),
+        Some(profile_label),
+        false,
+        &slug,
+        &label,
+        "",
+        &label,
+        candidate.icon.clone(),
+        assumptions,
+        enable_allowed,
     )
 }
 
@@ -553,6 +674,8 @@ fn build_item(
     icon: &str,
     name: &str,
     candidate_icon: Option<gio::Icon>,
+    assumptions: Option<String>,
+    enable_allowed: bool,
 ) -> EditorItem {
     let enable = gtk::CheckButton::with_label(name);
     enable.set_active(enabled);
@@ -560,6 +683,12 @@ fn build_item(
         "Enable Browser Candidate {name}",
         &[("{name}", name)],
     ))]);
+    if !enable_allowed && !enabled {
+        enable.set_sensitive(false);
+        enable.set_tooltip_text(Some(&i18n::text(
+            "Family assumptions must be valid before a profiled destination can be enabled",
+        )));
+    }
 
     let id_entry = gtk::Entry::builder()
         .text(id)
@@ -588,7 +717,9 @@ fn build_item(
         gtk::Image::from_gicon(&icon)
     } else {
         match &launch {
-            DestinationLaunch::Discovered { desktop_id } => discovery::icon(desktop_id)
+            DestinationLaunch::Discovered { desktop_id }
+            | DestinationLaunch::FirefoxProfile { desktop_id, .. }
+            | DestinationLaunch::ChromiumProfile { desktop_id, .. } => discovery::icon(desktop_id)
                 .map(|icon| gtk::Image::from_gicon(&icon))
                 .unwrap_or_else(|| gtk::Image::from_icon_name("web-browser")),
             DestinationLaunch::Manual { .. } => gtk::Image::from_icon_name("web-browser"),
@@ -607,6 +738,19 @@ fn build_item(
     body.set_margin_end(12);
     body.append(&header);
     body.append(&fields);
+    if let Some(assumptions) = assumptions {
+        let details = gtk::Label::builder()
+            .label(assumptions)
+            .xalign(0.0)
+            .wrap(true)
+            .selectable(true)
+            .build();
+        let assumptions_description = i18n::text("Family assumptions for this Browser Profile");
+        details.update_property(&[gtk::accessible::Property::Description(
+            assumptions_description.as_str(),
+        )]);
+        body.append(&details);
+    }
 
     let row = gtk::ListBoxRow::builder()
         .child(&body)
@@ -620,6 +764,7 @@ fn build_item(
         application_label,
         profile_label,
         enabled: enable,
+        enable_allowed,
         id: id_entry,
         label: label_entry,
         icon: icon_entry,
@@ -682,10 +827,21 @@ fn update_remove_blocks(items: &[EditorItem], preferred: &RefCell<Option<String>
         let blocked = referenced
             .as_deref()
             .is_some_and(|destination| item.id.text().as_str() == destination);
-        item.enabled.set_sensitive(!blocked);
+        let can_toggle = if blocked {
+            false
+        } else if item.enabled.is_active() {
+            true
+        } else {
+            item.enable_allowed
+        };
+        item.enabled.set_sensitive(can_toggle);
         if blocked {
             item.enabled.set_tooltip_text(Some(&i18n::text(
                 "Cannot remove a destination referenced by the Fallback Action",
+            )));
+        } else if !item.enable_allowed && !item.enabled.is_active() {
+            item.enabled.set_tooltip_text(Some(&i18n::text(
+                "Family assumptions must be valid before a profiled destination can be enabled",
             )));
         } else {
             item.enabled.set_tooltip_text(None);
@@ -752,4 +908,73 @@ fn collect_configuration(
         FallbackAction::Open(id.clone())
     };
     configuration::assemble(destinations, rules.to_vec(), fallback)
+}
+
+fn profile_key(launch: &DestinationLaunch) -> Option<(String, ProfileIdentity)> {
+    let desktop_id = launch.desktop_id()?.to_owned();
+    Some((desktop_id, launch.profile_identity()?))
+}
+
+fn identity_key(desktop_id: &str, identity: &ProfileIdentity) -> (String, ProfileIdentity) {
+    (desktop_id.to_owned(), identity.clone())
+}
+
+fn launch_from_identity(desktop_id: &str, identity: ProfileIdentity) -> DestinationLaunch {
+    match identity {
+        ProfileIdentity::Firefox { name, path } => DestinationLaunch::FirefoxProfile {
+            desktop_id: desktop_id.to_owned(),
+            name,
+            path: path.to_string_lossy().into_owned(),
+        },
+        ProfileIdentity::Chromium {
+            user_data_dir,
+            profile_directory,
+        } => DestinationLaunch::ChromiumProfile {
+            desktop_id: desktop_id.to_owned(),
+            user_data_dir: user_data_dir.to_string_lossy().into_owned(),
+            profile_directory,
+        },
+    }
+}
+
+fn assumptions_for(desktop_id: &str, identity: &ProfileIdentity) -> (Option<String>, bool) {
+    let executable = discovery::app_info(desktop_id)
+        .map(|application| gtk::gio::prelude::AppInfoExt::executable(&application));
+    let Some(executable) = executable else {
+        return (
+            Some(i18n::text(
+                "Browser Application is not installed. This profile cannot be enabled as a verified destination.",
+            )),
+            false,
+        );
+    };
+    let Some(assumptions) = profiles::classify(
+        desktop_id,
+        &executable,
+        &profiles::DiscoveryPaths::from_env(),
+    ) else {
+        return (
+            Some(i18n::text(
+                "Unknown packaging or unsupported capability. This remains a generic Browser Application rather than a verified profile destination.",
+            )),
+            false,
+        );
+    };
+    let locator = match identity {
+        ProfileIdentity::Firefox { name, path } => format!("{} ({name})", path.display()),
+        ProfileIdentity::Chromium {
+            user_data_dir,
+            profile_directory,
+        } => format!("{} / {profile_directory}", user_data_dir.display()),
+    };
+    let text = i18n::text_with(
+        "{product} family\nExecutable: {executable}\nProfile: {profile}\nPrivate flag: {flag}\nLaunch reuses the existing browser process for this profile. Browser Picker will not create, rename, delete, clone, or repair it.",
+        &[
+            ("{product}", &assumptions.product),
+            ("{executable}", &executable.display().to_string()),
+            ("{profile}", &locator),
+            ("{flag}", assumptions.private_flag),
+        ],
+    );
+    (Some(text), profiles::is_present(identity))
 }

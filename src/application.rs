@@ -9,7 +9,7 @@ use gtk::gdk;
 use gtk::gio;
 use gtk::glib;
 
-use crate::configuration::{self, BrowserDestination, DestinationLaunch, LaunchMode};
+use crate::configuration::{self, BrowserDestination, LaunchMode};
 use crate::i18n;
 use crate::launcher;
 use crate::open_target::OpenTarget;
@@ -503,6 +503,18 @@ pub(crate) fn show_picker(application: &adw::Application, session: PickerSession
         gtk::accessible::Property::KeyShortcuts("<Control><Shift>p"),
     ]);
     content.append(&private_mode);
+    let disclaimer = gtk::Label::builder()
+        .label(i18n::text(
+            "Private Launch Mode uses the browser-native private or incognito context. It does not promise a separate process, an isolated profile, or the absence of disk traces.",
+        ))
+        .xalign(0.0)
+        .wrap(true)
+        .build();
+    let disclaimer_description = i18n::text("Private Launch Mode privacy boundary");
+    disclaimer.update_property(&[gtk::accessible::Property::Description(
+        disclaimer_description.as_str(),
+    )]);
+    content.append(&disclaimer);
 
     let no_results = gtk::Box::new(gtk::Orientation::Horizontal, 9);
     let no_results_label = gtk::Label::new(Some(&i18n::text(
@@ -1031,6 +1043,9 @@ fn launch_destination(
                 launcher::FailureReason::PermissionDenied => {
                     i18n::text("executable permission was denied")
                 }
+                launcher::FailureReason::UnsupportedPrivate => {
+                    i18n::text("private Launch Mode is not available")
+                }
                 launcher::FailureReason::Other => i18n::text("process could not be started"),
             };
             surface.error.set_label(&i18n::text_with(
@@ -1050,7 +1065,7 @@ fn destination_icon(destination: &BrowserDestination) -> gtk::Image {
         .filter(|name| !name.is_empty())
     {
         gtk::Image::from_icon_name(name)
-    } else if let DestinationLaunch::Discovered { desktop_id } = &destination.launch {
+    } else if let Some(desktop_id) = destination.desktop_id() {
         crate::discovery::icon(desktop_id)
             .map(|icon| gtk::Image::from_gicon(&icon))
             .unwrap_or_else(|| gtk::Image::from_icon_name("web-browser"))

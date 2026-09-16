@@ -4,6 +4,7 @@ mod discovery;
 mod i18n;
 mod launcher;
 mod open_target;
+mod profiles;
 mod routing;
 mod routing_editor;
 mod setup;
@@ -88,6 +89,9 @@ fn launch_error_message(error: launcher::Error) -> String {
     let reason = match error.reason {
         launcher::FailureReason::NotFound => i18n::text("executable was not found"),
         launcher::FailureReason::PermissionDenied => i18n::text("executable permission was denied"),
+        launcher::FailureReason::UnsupportedPrivate => {
+            i18n::text("private Launch Mode is not available")
+        }
         launcher::FailureReason::Other => i18n::text("process could not be started"),
     };
     i18n::text_with(
