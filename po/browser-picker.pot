@@ -16,7 +16,9 @@ msgstr ""
 msgid "Browser;Chooser;Links;Routing;"
 msgstr ""
 
-msgid "Browser Picker provides a native Linux interface for choosing where links and local files open."
+msgid ""
+"Browser Picker provides a native Linux interface for choosing where links "
+"and local files open."
 msgstr ""
 
 msgid "Choose where links and local files open."
@@ -28,7 +30,19 @@ msgstr ""
 msgid "Unknown argument"
 msgstr ""
 
-msgid "Browser Picker\nChoose where links and local files open.\n\nUsage:\n  browser-picker\n  browser-picker <http(s)-url>\n  browser-picker --help\n  browser-picker --version\n\nOptions:\n  -h, --help       Show this help\n  -V, --version    Show version\n"
+msgid ""
+"Browser Picker\n"
+"Choose where links and local files open.\n"
+"\n"
+"Usage:\n"
+"  browser-picker\n"
+"  browser-picker <http(s)-url>\n"
+"  browser-picker --help\n"
+"  browser-picker --version\n"
+"\n"
+"Options:\n"
+"  -h, --help       Show this help\n"
+"  -V, --version    Show version\n"
 msgstr ""
 
 msgid "Routing an Open Target requires a graphical session"
@@ -76,10 +90,13 @@ msgstr ""
 msgid "Fallback references unknown destination '{id}'"
 msgstr ""
 
-msgid "Manual destination '{id}' executable must be an absolute path or a PATH-resolved name"
+msgid ""
+"Manual destination '{id}' executable must be an absolute path or a PATH-"
+"resolved name"
 msgstr ""
 
-msgid "Manual destination '{id}' must contain exactly one '{placeholder}' argument"
+msgid ""
+"Manual destination '{id}' must contain exactly one '{placeholder}' argument"
 msgstr ""
 
 msgid "executable was not found"
@@ -92,4 +109,52 @@ msgid "process could not be started"
 msgstr ""
 
 msgid "Browser Destination '{id}' could not accept dispatch: {reason}"
+msgstr ""
+
+msgid "Host: {host}"
+msgstr ""
+
+msgid ""
+"Unicode host: {unicode}\n"
+"ASCII host: {ascii}"
+msgstr ""
+
+msgid "Reveal full URL details"
+msgstr ""
+
+msgid "Filter destinations"
+msgstr ""
+
+msgid "Private Launch Mode (Ctrl+Shift+P)"
+msgstr ""
+
+msgid "No Browser Destinations match this filter."
+msgstr ""
+
+msgid "Clear filter"
+msgstr ""
+
+msgid "Configure Browser Picker"
+msgstr ""
+
+msgid "Open using the destination's private mode"
+msgstr ""
+
+msgid "Selected destination does not support private mode"
+msgstr ""
+
+msgid ""
+"Browser Destination '{label}' could not accept dispatch: {reason}. Choose it "
+"again to retry, or choose another destination."
+msgstr ""
+
+msgid "Browser Destination '{id}' must have a non-empty display label"
+msgstr ""
+
+msgid "Browser Destination display label '{label}' is not unique"
+msgstr ""
+
+msgid ""
+"Manual destination '{id}' private arguments must contain exactly one "
+"'{placeholder}' argument"
 msgstr ""

@@ -433,3 +433,43 @@ fn routing_requires_a_graphical_session() {
         "Routing an Open Target requires a graphical session\n"
     );
 }
+
+#[test]
+fn picker_destination_display_labels_must_be_unique() {
+    let config_home = TempDir::new().expect("temporary configuration home should be created");
+    write_raw_config(
+        &config_home,
+        "version = 1\n\n[[destinations]]\nid = \"first\"\nlabel = \"Same Browser\"\n\n[destinations.application]\ntype = \"manual\"\nexecutable = \"/bin/true\"\nargs = [\"{target}\"]\n\n[[destinations]]\nid = \"second\"\nlabel = \"Same Browser\"\n\n[destinations.application]\ntype = \"manual\"\nexecutable = \"/bin/true\"\nargs = [\"{target}\"]\n\n[fallback]\naction = \"show-picker\"\n",
+    );
+
+    let output = browser_picker(&config_home)
+        .arg("https://example.com/")
+        .output()
+        .expect("Browser Picker should start");
+
+    assert_eq!(output.status.code(), Some(3));
+    assert_eq!(
+        String::from_utf8(output.stderr).expect("error output should be UTF-8"),
+        "Browser Destination display label 'Same Browser' is not unique\n"
+    );
+}
+
+#[test]
+fn manual_private_arguments_require_one_exact_target_element() {
+    let config_home = TempDir::new().expect("temporary configuration home should be created");
+    write_raw_config(
+        &config_home,
+        "version = 1\n\n[[destinations]]\nid = \"controlled\"\nlabel = \"Controlled Browser\"\n\n[destinations.application]\ntype = \"manual\"\nexecutable = \"/bin/true\"\nargs = [\"{target}\"]\nprivate_args = [\"--private={target}\"]\n\n[fallback]\naction = \"open\"\ndestination = \"controlled\"\n",
+    );
+
+    let output = browser_picker(&config_home)
+        .arg("https://example.com/")
+        .output()
+        .expect("Browser Picker should start");
+
+    assert_eq!(output.status.code(), Some(3));
+    assert_eq!(
+        String::from_utf8(output.stderr).expect("error output should be UTF-8"),
+        "Manual destination 'controlled' private arguments must contain exactly one '{target}' argument\n"
+    );
+}

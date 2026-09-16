@@ -38,7 +38,11 @@ fn main() -> gtk::glib::ExitCode {
             gtk::glib::ExitCode::FAILURE
         }
         Some(argument) => match routing::route(argument) {
-            Ok(()) => gtk::glib::ExitCode::SUCCESS,
+            Ok(routing::Outcome::Dispatched) => gtk::glib::ExitCode::SUCCESS,
+            Ok(routing::Outcome::Pick {
+                target,
+                destinations,
+            }) => application::run_picker(target, destinations),
             Err(error) => {
                 let (message, status) = routing_error_message(error);
                 eprintln!("{message}");
@@ -108,6 +112,14 @@ fn configuration_error_message(error: configuration::Error) -> String {
             "Browser Destination ID '{id}' is not unique",
             &[("{id}", &id)],
         ),
+        configuration::Error::InvalidLabel(id) => i18n::text_with(
+            "Browser Destination '{id}' must have a non-empty display label",
+            &[("{id}", &id)],
+        ),
+        configuration::Error::DuplicateLabel(label) => i18n::text_with(
+            "Browser Destination display label '{label}' is not unique",
+            &[("{label}", &label)],
+        ),
         configuration::Error::UnknownFallback(id) => i18n::text_with(
             "Fallback references unknown destination '{id}'",
             &[("{id}", &id)],
@@ -118,6 +130,10 @@ fn configuration_error_message(error: configuration::Error) -> String {
         ),
         configuration::Error::InvalidTargetTemplate(id) => i18n::text_with(
             "Manual destination '{id}' must contain exactly one '{placeholder}' argument",
+            &[("{id}", &id), ("{placeholder}", "{target}")],
+        ),
+        configuration::Error::InvalidPrivateTargetTemplate(id) => i18n::text_with(
+            "Manual destination '{id}' private arguments must contain exactly one '{placeholder}' argument",
             &[("{id}", &id), ("{placeholder}", "{target}")],
         ),
     }

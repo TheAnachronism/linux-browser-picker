@@ -120,6 +120,42 @@
                 mkdir -p "$HOME" "$XDG_RUNTIME_DIR"
                 chmod 700 "$XDG_RUNTIME_DIR"
 
+                export XDG_CONFIG_HOME="$TMPDIR/config"
+                mkdir -p "$XDG_CONFIG_HOME/browser-picker"
+                cat > "$TMPDIR/controlled-browser" <<'EOF'
+#!/bin/sh
+printf '%s\n' "$@" > "$TMPDIR/received-argv"
+EOF
+                chmod 700 "$TMPDIR/controlled-browser"
+                cat > "$XDG_CONFIG_HOME/browser-picker/config.toml" <<EOF
+version = 1
+
+[[destinations]]
+id = "unavailable"
+label = "Unavailable Browser"
+
+[destinations.application]
+type = "manual"
+label = "Missing Browser Application"
+executable = "/definitely/missing/browser"
+args = ["{target}"]
+
+[[destinations]]
+id = "controlled"
+label = "Work Browser"
+profile_label = "Work Profile"
+
+[destinations.application]
+type = "manual"
+label = "Controlled Browser Application"
+executable = "$TMPDIR/controlled-browser"
+args = ["--normal", "{target}"]
+private_args = ["--private", "{target}"]
+
+[fallback]
+action = "show-picker"
+EOF
+
                 dbus-run-session \
                   --config-file=${pkgs.dbus}/share/dbus-1/session.conf \
                   -- \
@@ -168,8 +204,45 @@
                       trap - EXIT
                     }
 
+                    run_picker_and_assert_launch() {
+                      target="https://xn--bcher-kva.example/path?token=kept-private"
+                      ${browser-picker}/bin/browser-picker "$target" &
+                      launcher=$!
+                      window=
+                      for attempt in $(seq 1 100); do
+                        set -- $(xdotool search --onlyvisible --name "^Browser Picker$" 2>/dev/null || true)
+                        if [ "$#" -gt 0 ]; then
+                          window=$1
+                          break
+                        fi
+                        sleep 0.1
+                      done
+                      test -n "$window"
+                      xdotool windowfocus --sync "$window"
+
+                      xdotool key alt+1
+                      sleep 0.1
+                      kill -0 "$launcher"
+
+                      xdotool type "no result"
+                      xdotool key ctrl+a BackSpace
+                      xdotool type "work profile"
+                      xdotool key Down
+                      xdotool key ctrl+shift+p
+                      xdotool key alt+2
+
+                      for attempt in $(seq 1 100); do
+                        test ! -f "$TMPDIR/received-argv" || break
+                        sleep 0.1
+                      done
+                      test "$(cat "$TMPDIR/received-argv")" = "--private
+$target"
+                      wait "$launcher"
+                    }
+
                     run_and_assert_window ${browser-picker}/bin/browser-picker
                     run_and_assert_window gtk-launch io.github.TheAnachronism.BrowserPicker
+                    run_picker_and_assert_launch
                   '
 
                 touch "$out"

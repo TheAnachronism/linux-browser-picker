@@ -35,6 +35,7 @@ version = "0.1.0"
 dependencies = [
  "gettext-rs",
  "gtk4",
+ "idna",
  "libadwaita",
  "serde",
  "tempfile",

@@ -1,6 +1,6 @@
 use std::process::{Command, Stdio};
 
-use crate::configuration::LaunchDefinition;
+use crate::configuration::BrowserDestination;
 use crate::open_target::WebTarget;
 
 pub enum FailureReason {
@@ -14,9 +14,21 @@ pub struct Error {
     pub reason: FailureReason,
 }
 
-pub fn dispatch(definition: LaunchDefinition, target: &WebTarget) -> Result<(), Error> {
-    let mut command = Command::new(&definition.executable);
-    command.args(definition.arguments.iter().map(|argument| {
+pub fn dispatch(
+    destination: &BrowserDestination,
+    target: &WebTarget,
+    private: bool,
+) -> Result<(), Error> {
+    let arguments = if private {
+        destination
+            .private_arguments
+            .as_deref()
+            .unwrap_or(&destination.arguments)
+    } else {
+        &destination.arguments
+    };
+    let mut command = Command::new(&destination.executable);
+    command.args(arguments.iter().map(|argument| {
         if argument == "{target}" {
             target.as_str()
         } else {
@@ -29,7 +41,7 @@ pub fn dispatch(definition: LaunchDefinition, target: &WebTarget) -> Result<(), 
         .stderr(Stdio::null());
 
     command.spawn().map(|_| ()).map_err(|error| Error {
-        destination_id: definition.destination_id,
+        destination_id: destination.id.clone(),
         reason: match error.kind() {
             std::io::ErrorKind::NotFound => FailureReason::NotFound,
             std::io::ErrorKind::PermissionDenied => FailureReason::PermissionDenied,

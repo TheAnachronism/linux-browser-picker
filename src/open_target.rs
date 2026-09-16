@@ -11,6 +11,8 @@ pub enum Error {
 
 pub struct WebTarget {
     original: String,
+    ascii_host: String,
+    unicode_host: String,
 }
 
 impl WebTarget {
@@ -24,16 +26,25 @@ impl WebTarget {
         if !matches!(parsed.scheme(), "http" | "https") {
             return Err(Error::UnsupportedScheme);
         }
-        if parsed.host().is_none() {
-            return Err(Error::Malformed);
-        }
+        let ascii_host = parsed.host_str().ok_or(Error::Malformed)?.to_lowercase();
+        let (unicode_host, _) = idna::domain_to_unicode(&ascii_host);
 
         Ok(Self {
             original: original.to_owned(),
+            ascii_host,
+            unicode_host,
         })
     }
 
     pub fn as_str(&self) -> &str {
         &self.original
+    }
+
+    pub fn ascii_host(&self) -> &str {
+        &self.ascii_host
+    }
+
+    pub fn unicode_host(&self) -> &str {
+        &self.unicode_host
     }
 }
