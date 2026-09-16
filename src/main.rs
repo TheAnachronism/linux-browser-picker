@@ -1,4 +1,5 @@
 mod application;
+mod associations;
 mod configuration;
 mod discovery;
 mod i18n;

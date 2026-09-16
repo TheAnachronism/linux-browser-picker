@@ -9,6 +9,7 @@ use gtk::gio;
 use gtk::glib;
 
 use crate::application::{self, PickerSession};
+use crate::associations;
 use crate::configuration::{
     self, BrowserDestination, Configuration, ConfigurationStore, DestinationLaunch, FallbackAction,
     LaunchMode, RoutingRule, SaveConflictPolicy,
@@ -239,6 +240,8 @@ pub fn present(application: &adw::Application, session: PickerSession, store: Co
         )]);
         content.append(&warning);
     }
+
+    append_desktop_defaults(&content);
 
     let error = gtk::Label::builder()
         .xalign(0.0)
@@ -853,6 +856,42 @@ fn prompt_overwrite(
         ),
     );
     dialog.present(Some(window));
+}
+
+fn append_desktop_defaults(content: &gtk::Box) {
+    let heading = gtk::Label::builder()
+        .label(i18n::text("Desktop defaults"))
+        .xalign(0.0)
+        .build();
+    heading.add_css_class("heading");
+    heading.update_property(&[gtk::accessible::Property::Label("Desktop defaults")]);
+    content.append(&heading);
+
+    let report = associations::report();
+    for (kind, line) in ["http", "https", "html", "xhtml"]
+        .into_iter()
+        .zip(report.lines())
+    {
+        let status = gtk::Label::builder()
+            .label(&line)
+            .xalign(0.0)
+            .wrap(true)
+            .build();
+        status.set_widget_name(&format!("desktop-default-{kind}"));
+        status.update_property(&[gtk::accessible::Property::Label(line.as_str())]);
+        content.append(&status);
+    }
+
+    let instructions = gtk::Label::builder()
+        .label(associations::instructions())
+        .xalign(0.0)
+        .wrap(true)
+        .build();
+    instructions.add_css_class("dim-label");
+    instructions.update_property(&[gtk::accessible::Property::Description(
+        "Desktop default association instructions",
+    )]);
+    content.append(&instructions);
 }
 
 fn editor_items(

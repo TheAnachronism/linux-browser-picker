@@ -545,3 +545,27 @@ msgstr ""
 
 msgid "Configuration migration preview"
 msgstr ""
+
+msgid "{kind}: Browser Picker"
+msgstr ""
+
+msgid "{kind}: {name}"
+msgstr ""
+
+msgid "{kind}: not set"
+msgstr ""
+
+msgid "Change these defaults in GNOME Settings → Apps → Default Apps. Browser Picker never changes system defaults itself."
+msgstr ""
+
+msgid "Change these defaults in System Settings → Applications → Default Applications. Browser Picker never changes system defaults itself."
+msgstr ""
+
+msgid "Change these defaults in your desktop's default-application settings. Browser Picker never changes system defaults itself."
+msgstr ""
+
+msgid "Desktop defaults"
+msgstr ""
+
+msgid "Desktop default association instructions"
+msgstr ""

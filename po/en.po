@@ -584,3 +584,27 @@ msgstr "Configuration recovery error"
 
 msgid "Configuration migration preview"
 msgstr "Configuration migration preview"
+
+msgid "{kind}: Browser Picker"
+msgstr "{kind}: Browser Picker"
+
+msgid "{kind}: {name}"
+msgstr "{kind}: {name}"
+
+msgid "{kind}: not set"
+msgstr "{kind}: not set"
+
+msgid "Change these defaults in GNOME Settings → Apps → Default Apps. Browser Picker never changes system defaults itself."
+msgstr "Change these defaults in GNOME Settings → Apps → Default Apps. Browser Picker never changes system defaults itself."
+
+msgid "Change these defaults in System Settings → Applications → Default Applications. Browser Picker never changes system defaults itself."
+msgstr "Change these defaults in System Settings → Applications → Default Applications. Browser Picker never changes system defaults itself."
+
+msgid "Change these defaults in your desktop's default-application settings. Browser Picker never changes system defaults itself."
+msgstr "Change these defaults in your desktop's default-application settings. Browser Picker never changes system defaults itself."
+
+msgid "Desktop defaults"
+msgstr "Desktop defaults"
+
+msgid "Desktop default association instructions"
+msgstr "Desktop default association instructions"

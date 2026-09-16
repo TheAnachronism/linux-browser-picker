@@ -142,11 +142,14 @@ fn apps_by_id(applications: Vec<gio::AppInfo>) -> HashMap<String, gio::AppInfo> 
     map
 }
 
-fn is_browser_picker(application: &gio::AppInfo) -> bool {
-    let picker_desktop = format!("{ID}.desktop");
+pub(crate) fn is_picker_desktop_id(desktop_id: &str) -> bool {
+    desktop_id == ID || desktop_id == format!("{ID}.desktop")
+}
+
+pub(crate) fn is_browser_picker(application: &gio::AppInfo) -> bool {
     application
         .id()
-        .is_some_and(|id| id == ID || id == picker_desktop)
+        .is_some_and(|id| is_picker_desktop_id(&id))
         || application
             .executable()
             .file_name()

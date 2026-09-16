@@ -33,13 +33,170 @@
         };
       });
 
+      homeManagerModules = {
+        default =
+          { pkgs, lib, ... }:
+          {
+            imports = [ ./nix/home-manager.nix ];
+            config.programs.browser-picker.package = lib.mkDefault self.packages.${pkgs.stdenv.hostPlatform.system}.default;
+          };
+        browser-picker = self.homeManagerModules.default;
+      };
+
       checks = forAllSystems (
         pkgs:
         let
-          browser-picker = self.packages.${pkgs.stdenv.hostPlatform.system}.default;
+          inherit (pkgs) lib;
+          system = pkgs.stdenv.hostPlatform.system;
+          browser-picker = self.packages.${system}.default;
+          desktopId = "io.github.TheAnachronism.BrowserPicker.desktop";
+          homeManagerEval =
+            {
+              httpHttpsDefault ? false,
+              htmlXhtmlDefault ? false,
+            }:
+            lib.evalModules {
+              modules = [
+                ./nix/home-manager.nix
+                {
+                  options.home.packages = lib.mkOption {
+                    type = lib.types.listOf lib.types.package;
+                    default = [ ];
+                  };
+                  options.xdg.mimeApps.enable = lib.mkOption {
+                    type = lib.types.bool;
+                    default = false;
+                  };
+                  options.xdg.mimeApps.defaultApplications = lib.mkOption {
+                    type = lib.types.attrsOf lib.types.str;
+                    default = { };
+                  };
+                  config.programs.browser-picker = {
+                    enable = true;
+                    package = browser-picker;
+                    inherit httpHttpsDefault htmlXhtmlDefault;
+                  };
+                }
+              ];
+            };
+          none = homeManagerEval { };
+          web = homeManagerEval { httpHttpsDefault = true; };
+          docs = homeManagerEval { htmlXhtmlDefault = true; };
+          both = homeManagerEval {
+            httpHttpsDefault = true;
+            htmlXhtmlDefault = true;
+          };
         in
         {
           package = browser-picker;
+          home-manager-associations =
+            assert builtins.elem browser-picker none.config.home.packages;
+            assert none.config.xdg.mimeApps.enable == false;
+            assert none.config.xdg.mimeApps.defaultApplications == { };
+            assert web.config.xdg.mimeApps.defaultApplications == {
+              "x-scheme-handler/http" = desktopId;
+              "x-scheme-handler/https" = desktopId;
+            };
+            assert !(web.config.xdg.mimeApps.defaultApplications ? "text/html");
+            assert docs.config.xdg.mimeApps.defaultApplications == {
+              "text/html" = desktopId;
+              "application/xhtml+xml" = desktopId;
+            };
+            assert !(docs.config.xdg.mimeApps.defaultApplications ? "x-scheme-handler/http");
+            assert both.config.xdg.mimeApps.defaultApplications == {
+              "x-scheme-handler/http" = desktopId;
+              "x-scheme-handler/https" = desktopId;
+              "text/html" = desktopId;
+              "application/xhtml+xml" = desktopId;
+            };
+            pkgs.runCommand "browser-picker-home-manager-associations" { } ''
+              echo "Home Manager installs Browser Picker without generating canonical TOML" > "$out"
+            '';
+          xdg-associations = pkgs.runCommand "browser-picker-xdg-associations" {
+            nativeBuildInputs = [
+              browser-picker
+              pkgs.desktop-file-utils
+              pkgs.glib
+              pkgs.python3
+              pkgs.shared-mime-info
+            ];
+          } ''
+            export HOME="$TMPDIR/home"
+            export LANG=C.UTF-8
+            export LC_ALL=C.UTF-8
+            export XDG_DATA_HOME="$HOME/.local/share"
+            export XDG_CONFIG_HOME="$HOME/.config"
+            export XDG_DATA_DIRS="${browser-picker}/share"
+            export XDG_CONFIG_DIRS="$XDG_CONFIG_HOME"
+            export XDG_RUNTIME_DIR="$TMPDIR/runtime"
+            mkdir -p "$HOME" "$XDG_DATA_HOME/applications" "$XDG_CONFIG_HOME" "$XDG_RUNTIME_DIR"
+            chmod 700 "$XDG_RUNTIME_DIR"
+            cp "${browser-picker}/share/applications/${desktopId}" "$XDG_DATA_HOME/applications/${desktopId}"
+
+            test -x "${browser-picker}/bin/browser-picker"
+            test -f "${browser-picker}/share/applications/${desktopId}"
+            test -f "${browser-picker}/share/icons/hicolor/scalable/apps/io.github.TheAnachronism.BrowserPicker.svg"
+            test -f "${browser-picker}/share/metainfo/io.github.TheAnachronism.BrowserPicker.metainfo.xml"
+            test -d "${browser-picker}/share/locale/en/LC_MESSAGES"
+
+            python3 - "${browser-picker}/share/applications/${desktopId}" <<'PY'
+from pathlib import Path
+import sys
+desktop = Path(sys.argv[1]).read_text()
+assert "NoDisplay=true" not in desktop
+assert "Hidden=true" not in desktop
+mime = None
+for line in desktop.splitlines():
+    if line.startswith("MimeType="):
+        mime = [part for part in line.split("=", 1)[1].strip().strip(";").split(";") if part]
+assert mime == [
+    "x-scheme-handler/http",
+    "x-scheme-handler/https",
+    "text/html",
+    "application/xhtml+xml",
+], mime
+assert "Categories=" in desktop and "Settings" in desktop
+print("desktop entry remains visible with exact HTTP HTTPS HTML XHTML support")
+PY
+
+            cat > "$XDG_DATA_HOME/applications/other-browser.desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=Other Browser
+Exec=true %u
+MimeType=x-scheme-handler/https;text/html;application/xhtml+xml;
+EOF
+            cat > "$XDG_CONFIG_HOME/mimeapps.list" <<'EOF'
+[Default Applications]
+x-scheme-handler/http=io.github.TheAnachronism.BrowserPicker.desktop
+x-scheme-handler/https=other-browser.desktop
+text/html=other-browser.desktop
+
+[Removed Associations]
+application/xhtml+xml=io.github.TheAnachronism.BrowserPicker.desktop;other-browser.desktop;
+EOF
+            update-desktop-database "$XDG_DATA_HOME/applications"
+
+            http="$(gio mime x-scheme-handler/http)"
+            https="$(gio mime x-scheme-handler/https)"
+            html="$(gio mime text/html)"
+            xhtml="$(gio mime application/xhtml+xml || true)"
+            echo "$http"
+            echo "$https"
+            echo "$html"
+            echo "$xhtml"
+            echo "$http" | grep -F "${desktopId}"
+            echo "$https" | grep -F "other-browser.desktop"
+            echo "$html" | grep -F "other-browser.desktop"
+            touch "$out"
+          '';
+          aarch64-defined =
+            assert builtins.elem "aarch64-linux" systems;
+            assert self.packages ? aarch64-linux;
+            assert self.packages.aarch64-linux ? browser-picker;
+            pkgs.writeText "browser-picker-aarch64-defined" ''
+              aarch64-linux output is build-defined but runtime-unverified until exercised on a desktop.
+            '';
           gui-smoke =
             pkgs.runCommand "browser-picker-gui-smoke"
               {

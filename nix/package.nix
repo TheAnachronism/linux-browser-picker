@@ -8,6 +8,8 @@
   libadwaita,
   appstream,
   desktop-file-utils,
+  shared-mime-info,
+  hicolor-icon-theme,
   systems,
 }:
 
@@ -32,6 +34,8 @@ rustPlatform.buildRustPackage {
   buildInputs = [
     gtk4
     libadwaita
+    shared-mime-info
+    hicolor-icon-theme
   ];
   nativeCheckInputs = [
     appstream
