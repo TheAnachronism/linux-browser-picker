@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
 use std::ffi::OsStr;
 use std::rc::Rc;
@@ -10,7 +10,8 @@ use gtk::glib;
 
 use crate::application::{self, PickerSession};
 use crate::configuration::{
-    self, BrowserDestination, Configuration, DestinationLaunch, FallbackAction, RoutingRule,
+    self, BrowserDestination, Configuration, ConfigurationStore, DestinationLaunch, FallbackAction,
+    LaunchMode, RoutingRule, SaveConflictPolicy,
 };
 use crate::discovery::{self, BrowserCandidate};
 use crate::i18n;
@@ -32,12 +33,10 @@ struct EditorItem {
     row: gtk::ListBoxRow,
 }
 
-pub fn present(
-    application: &adw::Application,
-    session: PickerSession,
-    existing: Option<Configuration>,
-) {
+pub fn present(application: &adw::Application, session: PickerSession, store: ConfigurationStore) {
     let pending = Rc::clone(&session.pending);
+    let existing = store.configuration.clone();
+    session.set_configuration_open(true);
     if let Some(window) = application
         .windows()
         .into_iter()
@@ -138,6 +137,18 @@ pub fn present(
     order.append(&refresh);
     content.append(&order);
     content.append(&rule_editor.root);
+    let query_warning = gtk::Label::builder()
+        .label(i18n::text(
+            "Exact query values are stored as plain text in the configuration file. Browser Picker does not use a secret service.",
+        ))
+        .xalign(0.0)
+        .wrap(true)
+        .build();
+    query_warning.add_css_class("dim-label");
+    query_warning.update_property(&[gtk::accessible::Property::Description(
+        "Exact query values are stored as plain text",
+    )]);
+    content.append(&query_warning);
 
     if !discovery.partial.is_empty() {
         let expander = gtk::Expander::with_mnemonic(&i18n::text("_Partial handlers"));
@@ -171,6 +182,28 @@ pub fn present(
     let fallback = gtk::DropDown::from_strings(&[&show_picker_label]);
     fallback.update_property(&[gtk::accessible::Property::Label("Fallback Action")]);
     content.append(&fallback);
+    let fallback_mode_label = gtk::Label::builder()
+        .label(i18n::text("Fallback Launch Mode"))
+        .xalign(0.0)
+        .build();
+    content.append(&fallback_mode_label);
+    let fallback_mode =
+        gtk::DropDown::from_strings(&[&i18n::text("Normal"), &i18n::text("Private")]);
+    fallback_mode.update_property(&[gtk::accessible::Property::Label("Fallback Launch Mode")]);
+    content.append(&fallback_mode);
+
+    if !store.warnings.is_empty() {
+        let warning = gtk::Label::builder()
+            .label(store.warnings.join("\n"))
+            .xalign(0.0)
+            .wrap(true)
+            .build();
+        warning.add_css_class("warning");
+        warning.update_property(&[gtk::accessible::Property::Description(
+            "Configuration permission warning",
+        )]);
+        content.append(&warning);
+    }
 
     let error = gtk::Label::builder()
         .xalign(0.0)
@@ -207,10 +240,20 @@ pub fn present(
         .content(&toolbar)
         .build();
     window.set_widget_name("destination-setup");
+    let store = Rc::new(RefCell::new(store));
+    let allow_close = Rc::new(Cell::new(false));
+    let preferred_fallback_mode = existing
+        .as_ref()
+        .map(|configuration| match configuration.fallback.clone() {
+            FallbackAction::Open { mode, .. } => mode,
+            FallbackAction::ShowPicker => LaunchMode::Normal,
+        })
+        .unwrap_or(LaunchMode::Normal);
+    fallback_mode.set_selected(u32::from(preferred_fallback_mode == LaunchMode::Private));
 
     let preferred_fallback = Rc::new(RefCell::new(existing.as_ref().and_then(|configuration| {
         match &configuration.fallback {
-            FallbackAction::Open(destination) => Some(destination.clone()),
+            FallbackAction::Open { destination, .. } => Some(destination.clone()),
             FallbackAction::ShowPicker => None,
         }
     })));
@@ -221,8 +264,11 @@ pub fn present(
         items,
         #[strong]
         preferred_fallback,
+        #[strong]
+        fallback_mode,
         move || {
             restore_fallback(&fallback, &items.borrow(), &preferred_fallback);
+            fallback_mode.set_sensitive(fallback.selected() != 0);
         }
     );
     refresh_fallback();
@@ -231,9 +277,12 @@ pub fn present(
         items,
         #[strong]
         preferred_fallback,
+        #[weak]
+        fallback_mode,
         move |fallback| {
             update_preferred_fallback(fallback, &items.borrow(), &preferred_fallback);
             update_remove_blocks(&items.borrow(), &preferred_fallback);
+            fallback_mode.set_sensitive(fallback.selected() != 0);
         }
     ));
 
@@ -257,6 +306,8 @@ pub fn present(
     let explain = glib::clone!(
         #[weak]
         fallback,
+        #[weak]
+        fallback_mode,
         #[strong]
         items,
         #[strong]
@@ -284,7 +335,12 @@ pub fn present(
                     return;
                 }
             };
-            match collect_configuration(&items.borrow(), &rule_editor.rules(), &fallback) {
+            match collect_configuration(
+                &items.borrow(),
+                &rule_editor.rules(),
+                &fallback,
+                &fallback_mode,
+            ) {
                 Ok(configuration) => {
                     let evaluation = routing::evaluate(&configuration, &target);
                     rule_editor
@@ -362,6 +418,8 @@ pub fn present(
         #[weak]
         fallback,
         #[weak]
+        fallback_mode,
+        #[weak]
         error,
         #[strong]
         items,
@@ -369,15 +427,24 @@ pub fn present(
         rule_editor,
         #[strong]
         session,
+        #[strong]
+        store,
+        #[strong]
+        allow_close,
         move |_| {
             save_destinations(
                 &application,
                 &window,
                 &fallback,
+                &fallback_mode,
                 &error,
                 &items,
                 &rule_editor.rules(),
                 &session,
+                &store,
+                &allow_close,
+                SaveConflictPolicy::Abort,
+                false,
             );
         }
     ));
@@ -390,6 +457,8 @@ pub fn present(
         #[weak]
         fallback,
         #[weak]
+        fallback_mode,
+        #[weak]
         error,
         #[strong]
         items,
@@ -397,15 +466,24 @@ pub fn present(
         rule_editor,
         #[strong]
         session,
+        #[strong]
+        store,
+        #[strong]
+        allow_close,
         move |_, _| {
             save_destinations(
                 &application,
                 &window,
                 &fallback,
+                &fallback_mode,
                 &error,
                 &items,
                 &rule_editor.rules(),
                 &session,
+                &store,
+                &allow_close,
+                SaveConflictPolicy::Abort,
+                false,
             );
         }
     ));
@@ -413,22 +491,34 @@ pub fn present(
     application.set_accels_for_action("win.save-destinations", &["<Alt>s"]);
     save.set_receives_default(true);
     window.set_default_widget(Some(&save));
+    let close = gio::SimpleAction::new("close", None);
+    close.connect_activate(glib::clone!(
+        #[weak]
+        window,
+        move |_, _| window.close()
+    ));
+    window.add_action(&close);
+    application.set_accels_for_action("win.close", &["<Ctrl>w"]);
 
     let keys = gtk::EventControllerKey::new();
     keys.set_propagation_phase(gtk::PropagationPhase::Capture);
     let application_weak = application.downgrade();
     let window_weak = window.downgrade();
     let fallback_weak = fallback.downgrade();
+    let fallback_mode_weak = fallback_mode.downgrade();
     let error_weak = error.downgrade();
     let key_items = Rc::clone(&items);
     let key_rule_editor = Rc::clone(&rule_editor);
     let key_session = session.clone();
+    let key_store = Rc::clone(&store);
+    let key_allow_close = Rc::clone(&allow_close);
     rule_editor.connect_order_shortcuts(&window);
     keys.connect_key_pressed(move |_, key, _, modifiers| {
-        let (Some(application), Some(window), Some(fallback), Some(error)) = (
+        let (Some(application), Some(window), Some(fallback), Some(fallback_mode), Some(error)) = (
             application_weak.upgrade(),
             window_weak.upgrade(),
             fallback_weak.upgrade(),
+            fallback_mode_weak.upgrade(),
             error_weak.upgrade(),
         ) else {
             return glib::Propagation::Proceed;
@@ -441,10 +531,15 @@ pub fn present(
                 &application,
                 &window,
                 &fallback,
+                &fallback_mode,
                 &error,
                 &key_items,
                 &key_rule_editor.rules(),
                 &key_session,
+                &key_store,
+                &key_allow_close,
+                SaveConflictPolicy::Abort,
+                false,
             );
             glib::Propagation::Stop
         } else {
@@ -452,6 +547,117 @@ pub fn present(
         }
     });
     window.add_controller(keys);
+
+    window.connect_close_request(glib::clone!(
+        #[weak]
+        application,
+        #[weak]
+        fallback,
+        #[weak]
+        fallback_mode,
+        #[weak]
+        error,
+        #[strong]
+        items,
+        #[strong]
+        rule_editor,
+        #[strong]
+        session,
+        #[strong]
+        store,
+        #[strong]
+        allow_close,
+        #[upgrade_or]
+        glib::Propagation::Proceed,
+        move |window| {
+            if allow_close.get() {
+                session.resume_picker(&application);
+                return glib::Propagation::Proceed;
+            }
+            let prompt = match collect_configuration(
+                &items.borrow(),
+                &rule_editor.rules(),
+                &fallback,
+                &fallback_mode,
+            ) {
+                Ok(draft) => store
+                    .borrow()
+                    .configuration
+                    .as_ref()
+                    .is_none_or(|saved| !configuration::semantically_equal(saved, &draft)),
+                Err(_) => true,
+            };
+            if !prompt {
+                session.resume_picker(&application);
+                return glib::Propagation::Proceed;
+            }
+            let dialog = adw::AlertDialog::new(
+                Some(&i18n::text("Unsaved changes")),
+                Some(&i18n::text("Save the configuration draft before closing?")),
+            );
+            dialog.add_responses(&[
+                ("cancel", &i18n::text("_Cancel")),
+                ("discard", &i18n::text("_Discard")),
+                ("save", &i18n::text("_Save")),
+            ]);
+            dialog.set_response_appearance("discard", adw::ResponseAppearance::Destructive);
+            dialog.set_default_response(Some("save"));
+            dialog.set_close_response("cancel");
+            dialog.connect_response(
+                None,
+                glib::clone!(
+                    #[weak]
+                    application,
+                    #[weak]
+                    window,
+                    #[weak]
+                    fallback,
+                    #[weak]
+                    fallback_mode,
+                    #[weak]
+                    error,
+                    #[strong]
+                    items,
+                    #[strong]
+                    rule_editor,
+                    #[strong]
+                    session,
+                    #[strong]
+                    store,
+                    #[strong]
+                    allow_close,
+                    move |_, response| {
+                        match response {
+                            "discard" => {
+                                allow_close.set(true);
+                                session.set_configuration_open(false);
+                                window.close();
+                            }
+                            "save" => {
+                                save_destinations(
+                                    &application,
+                                    &window,
+                                    &fallback,
+                                    &fallback_mode,
+                                    &error,
+                                    &items,
+                                    &rule_editor.rules(),
+                                    &session,
+                                    &store,
+                                    &allow_close,
+                                    SaveConflictPolicy::Abort,
+                                    true,
+                                );
+                            }
+                            _ => {}
+                        }
+                    }
+                ),
+            );
+            dialog.present(Some(window));
+            glib::Propagation::Stop
+        }
+    ));
 
     window.present();
     if first_run && let Some(first) = items.borrow().first() {
@@ -462,31 +668,73 @@ pub fn present(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn save_destinations(
     application: &adw::Application,
     window: &adw::ApplicationWindow,
     fallback: &gtk::DropDown,
+    fallback_mode: &gtk::DropDown,
     error: &gtk::Label,
     items: &Rc<RefCell<Vec<EditorItem>>>,
     rules: &[RoutingRule],
     session: &PickerSession,
+    store: &Rc<RefCell<ConfigurationStore>>,
+    allow_close: &Rc<Cell<bool>>,
+    policy: SaveConflictPolicy,
+    close_after: bool,
 ) {
-    match collect_configuration(&items.borrow(), rules, fallback) {
-        Ok(configuration) => match configuration::save(&configuration) {
-            Ok(()) => {
+    match collect_configuration(&items.borrow(), rules, fallback, fallback_mode) {
+        Ok(configuration) => match store.borrow_mut().save(&configuration, policy) {
+            Ok(result) => {
+                let mut messages = Vec::new();
+                if let Some(path) = result.backup_path {
+                    messages.push(i18n::text_with(
+                        "Saved. A backup of the external file is at {path}",
+                        &[("{path}", &path.display().to_string())],
+                    ));
+                }
+                messages.extend(result.warnings);
+                if messages.is_empty() {
+                    error.set_visible(false);
+                } else {
+                    error.set_label(&messages.join("\n"));
+                    error.set_visible(true);
+                }
                 if session.pending.borrow().front().is_some() {
+                    allow_close.set(true);
+                    session.set_configuration_open(false);
                     match application::reapply_front(application, session) {
                         Ok(()) => window.close(),
                         Err((message, _)) => {
+                            allow_close.set(false);
+                            session.set_configuration_open(true);
                             error.set_label(&message);
                             error.set_visible(true);
                             error.grab_focus();
                         }
                     }
+                } else if close_after {
+                    allow_close.set(true);
+                    session.set_configuration_open(false);
+                    window.close();
                 } else {
-                    error.set_visible(false);
                     window.present();
                 }
+            }
+            Err(configuration::Error::Conflict) if policy == SaveConflictPolicy::Abort => {
+                prompt_overwrite(
+                    application,
+                    window,
+                    fallback,
+                    fallback_mode,
+                    error,
+                    items,
+                    rules,
+                    session,
+                    store,
+                    allow_close,
+                    close_after,
+                );
             }
             Err(failure) => {
                 error.set_label(&failure.message());
@@ -500,6 +748,76 @@ fn save_destinations(
             error.grab_focus();
         }
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prompt_overwrite(
+    application: &adw::Application,
+    window: &adw::ApplicationWindow,
+    fallback: &gtk::DropDown,
+    fallback_mode: &gtk::DropDown,
+    error: &gtk::Label,
+    items: &Rc<RefCell<Vec<EditorItem>>>,
+    rules: &[RoutingRule],
+    session: &PickerSession,
+    store: &Rc<RefCell<ConfigurationStore>>,
+    allow_close: &Rc<Cell<bool>>,
+    close_after: bool,
+) {
+    let dialog = adw::AlertDialog::new(
+        Some(&i18n::text("Configuration changed on disk")),
+        Some(&i18n::text(
+            "Another editor replaced this file. Overwrite after creating an owner-only backup?",
+        )),
+    );
+    dialog.add_responses(&[
+        ("cancel", &i18n::text("_Cancel")),
+        ("overwrite", &i18n::text("_Overwrite")),
+    ]);
+    dialog.set_response_appearance("overwrite", adw::ResponseAppearance::Destructive);
+    dialog.set_default_response(Some("cancel"));
+    dialog.set_close_response("cancel");
+    let rules = rules.to_vec();
+    dialog.connect_response(
+        Some("overwrite"),
+        glib::clone!(
+            #[weak]
+            application,
+            #[weak]
+            window,
+            #[weak]
+            fallback,
+            #[weak]
+            fallback_mode,
+            #[weak]
+            error,
+            #[strong]
+            items,
+            #[strong]
+            session,
+            #[strong]
+            store,
+            #[strong]
+            allow_close,
+            move |_, _| {
+                save_destinations(
+                    &application,
+                    &window,
+                    &fallback,
+                    &fallback_mode,
+                    &error,
+                    &items,
+                    &rules,
+                    &session,
+                    &store,
+                    &allow_close,
+                    SaveConflictPolicy::Overwrite,
+                    close_after,
+                );
+            }
+        ),
+    );
+    dialog.present(Some(window));
 }
 
 fn editor_items(
@@ -873,6 +1191,7 @@ fn collect_configuration(
     items: &[EditorItem],
     rules: &[RoutingRule],
     fallback: &gtk::DropDown,
+    fallback_mode: &gtk::DropDown,
 ) -> Result<Configuration, configuration::Error> {
     let mut destinations = Vec::new();
     let mut enabled_ids = Vec::new();
@@ -905,7 +1224,15 @@ fn collect_configuration(
         let Some(id) = enabled_ids.get(selected - 1) else {
             return Err(configuration::Error::UnknownFallback(String::new()));
         };
-        FallbackAction::Open(id.clone())
+        let mode = if fallback_mode.selected() == 1 {
+            LaunchMode::Private
+        } else {
+            LaunchMode::Normal
+        };
+        FallbackAction::Open {
+            destination: id.clone(),
+            mode,
+        }
     };
     configuration::assemble(destinations, rules.to_vec(), fallback)
 }

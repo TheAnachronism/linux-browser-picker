@@ -127,8 +127,12 @@ pub fn evaluate(configuration: &Configuration, target: &WebTarget) -> RoutingEva
         .and_then(|id| configuration.rules.iter().find(|rule| rule.id == id))
         .map(|rule| describe_action(&rule.action))
         .unwrap_or_else(|| match &configuration.fallback {
-            FallbackAction::Open(destination) => {
-                format!("Fallback: open {destination} in normal Launch Mode")
+            FallbackAction::Open { destination, mode } => {
+                let mode = match mode {
+                    LaunchMode::Normal => "normal",
+                    LaunchMode::Private => "private",
+                };
+                format!("Fallback: open {destination} in {mode} Launch Mode")
             }
             FallbackAction::ShowPicker => "Fallback: show Picker".to_owned(),
         });
@@ -187,9 +191,16 @@ fn apply_fallback(
     target: OpenTarget,
 ) -> Result<Outcome, Error> {
     match fallback {
-        FallbackAction::Open(destination_id) => {
-            launcher::dispatch(destination(&destinations, &destination_id), &target, false)
-                .map_err(Error::Launch)?;
+        FallbackAction::Open {
+            destination: destination_id,
+            mode,
+        } => {
+            launcher::dispatch(
+                destination(&destinations, &destination_id),
+                &target,
+                mode == LaunchMode::Private,
+            )
+            .map_err(Error::Launch)?;
             Ok(Outcome::Dispatched)
         }
         FallbackAction::ShowPicker => Ok(Outcome::Pick {

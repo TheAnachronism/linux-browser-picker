@@ -263,7 +263,7 @@ msgstr ""
 msgid "Saved configuration could not be reloaded"
 msgstr ""
 
-msgid "Edit Routing Rules for This URL"
+msgid "_Edit Routing Rules for This URL"
 msgstr ""
 
 msgid "Routing Rules"
@@ -427,4 +427,58 @@ msgid ""
 "Profile: {profile}\n"
 "Private flag: {flag}\n"
 "Launch reuses the existing browser process for this profile. Browser Picker will not create, rename, delete, clone, or repair it."
+msgstr ""
+
+msgid "Configuration is readable by group or others. Exact query values are stored as plain text."
+msgstr ""
+
+msgid "Configuration was changed in another editor. Overwrite to keep this draft after creating a backup."
+msgstr ""
+
+msgid "Configuration must resolve to a user-owned regular file"
+msgstr ""
+
+msgid "Configuration backup permission was denied"
+msgstr ""
+
+msgid "Configuration backup could not be created"
+msgstr ""
+
+msgid "Exact query values are stored as plain text in the configuration file. Browser Picker does not use a secret service."
+msgstr ""
+
+msgid "Fallback Launch Mode"
+msgstr ""
+
+msgid "Saved. A backup of the external file is at {path}"
+msgstr ""
+
+msgid "Unsaved changes"
+msgstr ""
+
+msgid "Save the configuration draft before closing?"
+msgstr ""
+
+msgid "_Discard"
+msgstr ""
+
+msgid "_Cancel"
+msgstr ""
+
+msgid "_Save"
+msgstr ""
+
+msgid "Configuration changed on disk"
+msgstr ""
+
+msgid "Another editor replaced this file. Overwrite after creating an owner-only backup?"
+msgstr ""
+
+msgid "_Overwrite"
+msgstr ""
+
+msgid "Exact query values are stored as plain text"
+msgstr ""
+
+msgid "Configuration permission warning"
 msgstr ""

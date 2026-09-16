@@ -33,6 +33,7 @@ pub(crate) struct PickerSession {
     remaining: Rc<RefCell<glib::WeakRef<gtk::Label>>>,
     picker_window: Rc<RefCell<glib::WeakRef<adw::ApplicationWindow>>>,
     rebuilding: Rc<RefCell<bool>>,
+    configuration_open: Rc<RefCell<bool>>,
 }
 
 impl PickerSession {
@@ -43,6 +44,7 @@ impl PickerSession {
             remaining: Rc::new(RefCell::new(glib::WeakRef::new())),
             picker_window: Rc::new(RefCell::new(glib::WeakRef::new())),
             rebuilding: Rc::new(RefCell::new(false)),
+            configuration_open: Rc::new(RefCell::new(false)),
         }
     }
 
@@ -59,7 +61,30 @@ impl PickerSession {
         }
         self.picker_window.borrow().set(None);
         *self.rebuilding.borrow_mut() = false;
-        if !self.pending.borrow().is_empty() {
+        if !self.pending.borrow().is_empty() && !self.configuration_is_open() {
+            show_picker(application, self.clone());
+        }
+    }
+
+    pub(crate) fn configuration_is_open(&self) -> bool {
+        *self.configuration_open.borrow()
+    }
+
+    pub(crate) fn set_configuration_open(&self, open: bool) {
+        *self.configuration_open.borrow_mut() = open;
+        if let Some(window) = self.picker_window.borrow().upgrade() {
+            window.set_sensitive(!open);
+        }
+    }
+
+    pub(crate) fn resume_picker(&self, application: &adw::Application) {
+        self.set_configuration_open(false);
+        if self.pending.borrow().is_empty() {
+            return;
+        }
+        if let Some(window) = self.picker_window.borrow().upgrade() {
+            window.present();
+        } else {
             show_picker(application, self.clone());
         }
     }
@@ -203,11 +228,13 @@ fn present_accepted(application: &adw::Application, session: &PickerSession, nee
         if let Some(window) = application.active_window() {
             window.present();
         } else {
-            let existing = configuration::load_optional().ok().flatten();
-            setup::present(application, session.clone(), existing);
+            present_setup(application, session);
         }
     } else if !session.pending.borrow().is_empty() {
         session.update_remaining();
+        if session.configuration_is_open() {
+            return;
+        }
         if let Some(window) = session.picker_window.borrow().upgrade() {
             window.present();
         } else {
@@ -258,6 +285,23 @@ pub(crate) fn reapply_front(
     }
 }
 
+fn open_configuration_store() -> Result<configuration::ConfigurationStore, configuration::Error> {
+    let path = configuration::default_path()?;
+    match configuration::ConfigurationStore::open_path(&path) {
+        Err(configuration::Error::Read(std::io::ErrorKind::NotFound)) => {
+            configuration::ConfigurationStore::create_path(&path)
+        }
+        result => result,
+    }
+}
+
+fn present_setup(application: &adw::Application, session: &PickerSession) {
+    match open_configuration_store() {
+        Ok(store) => setup::present(application, session.clone(), store),
+        Err(_) => show_configuration_window(application),
+    }
+}
+
 fn show_request_error(application: &adw::Application, message: &str) {
     let page = adw::StatusPage::builder()
         .title(i18n::text("Open Target rejected"))
@@ -282,10 +326,7 @@ fn present_activation(application: &adw::Application, session: &PickerSession) {
         show_picker(application, session.clone());
         return;
     }
-    match configuration::load_optional() {
-        Ok(existing) => setup::present(application, session.clone(), existing),
-        Err(_) => show_configuration_window(application),
-    }
+    present_setup(application, session);
 }
 
 fn show_configuration_window(application: &adw::Application) {
@@ -334,7 +375,7 @@ pub(crate) fn show_picker(application: &adw::Application, session: PickerSession
     content.append(&host);
 
     let host_details = gtk::Label::builder()
-        .label(&current.target.summary())
+        .label(current.target.summary())
         .xalign(0.0)
         .selectable(true)
         .build();
@@ -370,19 +411,18 @@ pub(crate) fn show_picker(application: &adw::Application, session: PickerSession
         full_target,
         move |button| full_target.set_visible(button.is_active())
     ));
-    let edit_rules = gtk::Button::with_label(&i18n::text("Edit Routing Rules for This URL"));
-    edit_rules.update_property(&[gtk::accessible::Property::Label(
-        "Edit Routing Rules for current URL",
-    )]);
+    let edit_label = i18n::text("_Edit Routing Rules for This URL");
+    let edit_rules = gtk::Button::with_mnemonic(&edit_label);
+    edit_rules.update_property(&[
+        gtk::accessible::Property::Label(edit_label.trim_start_matches('_')),
+        gtk::accessible::Property::KeyShortcuts("<Alt>e"),
+    ]);
     edit_rules.connect_clicked(glib::clone!(
         #[weak]
         application,
         #[strong]
         session,
-        move |_| {
-            let existing = configuration::load_optional().ok().flatten();
-            setup::present(&application, session.clone(), existing);
-        }
+        move |_| present_setup(&application, &session)
     ));
     content.append(&edit_rules);
 
@@ -455,10 +495,7 @@ pub(crate) fn show_picker(application: &adw::Application, session: PickerSession
                 application,
                 #[strong]
                 session,
-                move |_| {
-                    let existing = configuration::load_optional().ok().flatten();
-                    setup::present(&application, session.clone(), existing);
-                }
+                move |_| present_setup(&application, &session)
             ));
             row_box.append(&repair);
         }
@@ -633,10 +670,7 @@ pub(crate) fn show_picker(application: &adw::Application, session: PickerSession
         application,
         #[strong]
         session,
-        move |_| {
-            let existing = configuration::load_optional().ok().flatten();
-            setup::present(&application, session.clone(), existing);
-        }
+        move |_| present_setup(&application, &session)
     ));
 
     search.connect_activate(glib::clone!(
@@ -713,6 +747,16 @@ pub(crate) fn show_picker(application: &adw::Application, session: PickerSession
     ));
     window.add_action(&close);
     application.set_accels_for_action("win.close", &["<Ctrl>w"]);
+    let edit_routing = gio::SimpleAction::new("edit-routing", None);
+    edit_routing.connect_activate(glib::clone!(
+        #[weak]
+        application,
+        #[strong]
+        session,
+        move |_, _| present_setup(&application, &session)
+    ));
+    window.add_action(&edit_routing);
+    application.set_accels_for_action("win.edit-routing", &["<Alt>e"]);
     let pending_on_close = Rc::clone(&pending);
 
     let keys = gtk::EventControllerKey::new();

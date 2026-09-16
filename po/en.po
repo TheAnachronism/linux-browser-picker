@@ -294,8 +294,8 @@ msgstr "Browser Destination '{id}' does not support private Launch Mode"
 msgid "Saved configuration could not be reloaded"
 msgstr "Saved configuration could not be reloaded"
 
-msgid "Edit Routing Rules for This URL"
-msgstr "Edit Routing Rules for This URL"
+msgid "_Edit Routing Rules for This URL"
+msgstr "_Edit Routing Rules for This URL"
 
 msgid "Routing Rules"
 msgstr "Routing Rules"
@@ -467,3 +467,57 @@ msgstr ""
 "Profile: {profile}\n"
 "Private flag: {flag}\n"
 "Launch reuses the existing browser process for this profile. Browser Picker will not create, rename, delete, clone, or repair it."
+
+msgid "Configuration is readable by group or others. Exact query values are stored as plain text."
+msgstr "Configuration is readable by group or others. Exact query values are stored as plain text."
+
+msgid "Configuration was changed in another editor. Overwrite to keep this draft after creating a backup."
+msgstr "Configuration was changed in another editor. Overwrite to keep this draft after creating a backup."
+
+msgid "Configuration must resolve to a user-owned regular file"
+msgstr "Configuration must resolve to a user-owned regular file"
+
+msgid "Configuration backup permission was denied"
+msgstr "Configuration backup permission was denied"
+
+msgid "Configuration backup could not be created"
+msgstr "Configuration backup could not be created"
+
+msgid "Exact query values are stored as plain text in the configuration file. Browser Picker does not use a secret service."
+msgstr "Exact query values are stored as plain text in the configuration file. Browser Picker does not use a secret service."
+
+msgid "Fallback Launch Mode"
+msgstr "Fallback Launch Mode"
+
+msgid "Saved. A backup of the external file is at {path}"
+msgstr "Saved. A backup of the external file is at {path}"
+
+msgid "Unsaved changes"
+msgstr "Unsaved changes"
+
+msgid "Save the configuration draft before closing?"
+msgstr "Save the configuration draft before closing?"
+
+msgid "_Discard"
+msgstr "_Discard"
+
+msgid "_Cancel"
+msgstr "_Cancel"
+
+msgid "_Save"
+msgstr "_Save"
+
+msgid "Configuration changed on disk"
+msgstr "Configuration changed on disk"
+
+msgid "Another editor replaced this file. Overwrite after creating an owner-only backup?"
+msgstr "Another editor replaced this file. Overwrite after creating an owner-only backup?"
+
+msgid "_Overwrite"
+msgstr "_Overwrite"
+
+msgid "Exact query values are stored as plain text"
+msgstr "Exact query values are stored as plain text"
+
+msgid "Configuration permission warning"
+msgstr "Configuration permission warning"

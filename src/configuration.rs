@@ -1,3 +1,5 @@
+mod store;
+
 use std::collections::HashSet;
 use std::env;
 use std::io::ErrorKind;
@@ -9,6 +11,8 @@ use serde::{Deserialize, Serialize};
 use crate::discovery;
 use crate::i18n;
 use crate::profiles::{self, ProfileIdentity};
+
+pub use store::{ConfigurationStore, SaveConflictPolicy};
 
 #[derive(Clone, Debug)]
 pub struct BrowserDestination {
@@ -72,9 +76,12 @@ impl DestinationLaunch {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FallbackAction {
-    Open(String),
+    Open {
+        destination: String,
+        mode: LaunchMode,
+    },
     ShowPicker,
 }
 
@@ -192,6 +199,7 @@ pub struct Configuration {
     pub fallback: FallbackAction,
 }
 
+#[derive(Debug)]
 pub enum Error {
     ConfigHomeNotAbsolute,
     HomeNotSet,
@@ -221,6 +229,10 @@ pub enum Error {
     InvalidPrivateTargetTemplate(String),
     InvalidDesktopId(String),
     InvalidProfileIdentity(String),
+    Conflict,
+    NotRegularFile,
+    NotOwned,
+    Backup(ErrorKind),
 }
 
 impl BrowserDestination {
@@ -357,13 +369,23 @@ impl Error {
                 "Profile destination '{id}' must persist a native profile identity",
                 &[("{id}", id)],
             ),
+            Self::Conflict => i18n::text(
+                "Configuration was changed in another editor. Overwrite to keep this draft after creating a backup.",
+            ),
+            Self::NotRegularFile | Self::NotOwned => {
+                i18n::text("Configuration must resolve to a user-owned regular file")
+            }
+            Self::Backup(ErrorKind::PermissionDenied) => {
+                i18n::text("Configuration backup permission was denied")
+            }
+            Self::Backup(_) => i18n::text("Configuration backup could not be created"),
         }
     }
 }
 
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-struct ConfigFile {
+pub(super) struct ConfigFile {
     version: u32,
     destinations: Vec<DestinationFile>,
     fallback: FallbackFile,
@@ -414,15 +436,16 @@ enum ApplicationFile {
 #[derive(Deserialize, Serialize)]
 #[serde(tag = "action", rename_all = "kebab-case", deny_unknown_fields)]
 enum FallbackFile {
-    Open { destination: String },
+    Open {
+        destination: String,
+        #[serde(default)]
+        mode: LaunchMode,
+    },
     ShowPicker,
 }
 
 pub fn load() -> Result<Configuration, Error> {
-    let source =
-        std::fs::read_to_string(config_path()?).map_err(|error| Error::Read(error.kind()))?;
-    let file: ConfigFile = toml::from_str(&source).map_err(|_| Error::InvalidToml)?;
-    validate(file)
+    store::load_from(&config_path()?)
 }
 
 pub fn load_optional() -> Result<Option<Configuration>, Error> {
@@ -432,18 +455,16 @@ pub fn load_optional() -> Result<Option<Configuration>, Error> {
     }
 }
 
-pub fn save(configuration: &Configuration) -> Result<(), Error> {
-    let path = config_path()?;
-    let directory = path
-        .parent()
-        .expect("configuration path should have a parent");
-    std::fs::create_dir_all(directory).map_err(|error| Error::Save(error.kind()))?;
-    let serialized =
-        toml::to_string_pretty(&to_file(configuration)).map_err(|_| Error::InvalidToml)?;
-    let temporary = directory.join("config.toml.tmp");
-    std::fs::write(&temporary, serialized).map_err(|error| Error::Save(error.kind()))?;
-    std::fs::rename(temporary, path).map_err(|error| Error::Save(error.kind()))?;
-    Ok(())
+pub fn default_path() -> Result<PathBuf, Error> {
+    config_path()
+}
+
+pub(crate) fn files_match(left: &ConfigFile, right: &ConfigFile) -> bool {
+    toml::to_string(left).ok() == toml::to_string(right).ok()
+}
+
+pub fn semantically_equal(left: &Configuration, right: &Configuration) -> bool {
+    files_match(&to_file(left), &to_file(right))
 }
 
 pub fn assemble(
@@ -458,7 +479,7 @@ pub fn assemble(
     }))
 }
 
-fn config_path() -> Result<PathBuf, Error> {
+pub(super) fn config_path() -> Result<PathBuf, Error> {
     if let Some(directory) = env::var_os("XDG_CONFIG_HOME") {
         let directory = PathBuf::from(directory);
         if !directory.is_absolute() {
@@ -470,8 +491,7 @@ fn config_path() -> Result<PathBuf, Error> {
     let home = env::var_os("HOME").ok_or(Error::HomeNotSet)?;
     Ok(Path::new(&home).join(".config/browser-picker/config.toml"))
 }
-
-fn validate(file: ConfigFile) -> Result<Configuration, Error> {
+pub(super) fn validate(file: ConfigFile) -> Result<Configuration, Error> {
     if file.version != 1 {
         return Err(Error::UnsupportedVersion(file.version));
     }
@@ -508,11 +528,18 @@ fn validate(file: ConfigFile) -> Result<Configuration, Error> {
     }
 
     let fallback = match file.fallback {
-        FallbackFile::Open { destination } => {
+        FallbackFile::Open { destination, mode } => {
             if !ids.contains(&destination) {
                 return Err(Error::UnknownFallback(destination));
             }
-            FallbackAction::Open(destination)
+            let destination_ref = destinations
+                .iter()
+                .find(|candidate| candidate.id == destination)
+                .ok_or_else(|| Error::UnknownFallback(destination.clone()))?;
+            if mode == LaunchMode::Private && !destination_ref.supports_private() {
+                return Err(Error::UnsupportedPrivateMode(destination));
+            }
+            FallbackAction::Open { destination, mode }
         }
         FallbackFile::ShowPicker => FallbackAction::ShowPicker,
     };
@@ -822,7 +849,7 @@ fn executable_is_available(executable: &str) -> bool {
     }
 }
 
-fn to_file(configuration: &Configuration) -> ConfigFile {
+pub(super) fn to_file(configuration: &Configuration) -> ConfigFile {
     ConfigFile {
         version: 1,
         destinations: configuration
@@ -870,8 +897,9 @@ fn to_file(configuration: &Configuration) -> ConfigFile {
             .collect(),
         rules: configuration.rules.clone(),
         fallback: match &configuration.fallback {
-            FallbackAction::Open(destination) => FallbackFile::Open {
+            FallbackAction::Open { destination, mode } => FallbackFile::Open {
                 destination: destination.clone(),
+                mode: *mode,
             },
             FallbackAction::ShowPicker => FallbackFile::ShowPicker,
         },

@@ -92,6 +92,7 @@
                                 export XDG_CONFIG_HOME="$TMPDIR/config"
                                 mkdir -p "$XDG_CONFIG_HOME/browser-picker"
                                 cat > "$XDG_CONFIG_HOME/browser-picker/config.toml" <<EOF
+                # Browser Picker configuration
                 version = 1
 
                 [[destinations]]
@@ -605,6 +606,64 @@
                                       unset BROWSER_PICKER_TEST_OUTPUT
                                     }
 
+                                    run_paused_configuration_and_live_routing() {
+                                      export BROWSER_PICKER_TEST_OUTPUT="$TMPDIR/paused-live-argv"
+                                      rm -f "$BROWSER_PICKER_TEST_OUTPUT"
+                                      ${browser-picker}/bin/browser-picker "https://pending.example/queue" &
+                                      launcher=$!
+                                      window=
+                                      for attempt in $(seq 1 100); do
+                                        set -- $(xdotool search --onlyvisible --name "^Browser Picker$" 2>/dev/null || true)
+                                        if [ "$#" -gt 0 ]; then
+                                          window=$1
+                                          break
+                                        fi
+                                        sleep 0.1
+                                      done
+                                      test -n "$window"
+                                      xdotool windowfocus --sync "$window"
+                                      xdotool key --clearmodifiers alt+e
+                                      for attempt in $(seq 1 100); do
+                                        set -- $(xdotool search --onlyvisible --name "^Browser Picker$" 2>/dev/null || true)
+                                        if [ "$#" -ge 2 ]; then
+                                          break
+                                        fi
+                                        sleep 0.1
+                                      done
+                                      set -- $(xdotool search --onlyvisible --name "^Browser Picker$" 2>/dev/null || true)
+                                      test "$#" -ge 2
+                                      test ! -f "$BROWSER_PICKER_TEST_OUTPUT"
+                                      ${browser-picker}/bin/browser-picker "https://automatic.example/live"
+                                      for attempt in $(seq 1 100); do
+                                        test -f "$BROWSER_PICKER_TEST_OUTPUT" && break
+                                        sleep 0.1
+                                      done
+                                      test "$(cat "$BROWSER_PICKER_TEST_OUTPUT")" = "--normal
+                https://automatic.example/live"
+                                      kill -0 "$launcher"
+                                      xdotool windowfocus --sync "$window" || true
+                                      xdotool key --clearmodifiers alt+2
+                                      sleep 0.4
+                                      test "$(cat "$BROWSER_PICKER_TEST_OUTPUT")" = "--normal
+                https://automatic.example/live"
+                                      grep -q "# Browser Picker configuration" "$XDG_CONFIG_HOME/browser-picker/config.toml"
+                                      for round in $(seq 1 8); do
+                                        set -- $(xdotool search --onlyvisible --name "^Browser Picker$" 2>/dev/null || true)
+                                        if [ "$#" -eq 0 ]; then
+                                          break
+                                        fi
+                                        for candidate in "$@"; do
+                                          xdotool windowfocus --sync "$candidate" || true
+                                          xdotool key --clearmodifiers ctrl+w
+                                        done
+                                        sleep 0.15
+                                      done
+                                      set -- $(xdotool search --onlyvisible --name "^Browser Picker$" 2>/dev/null || true)
+                                      test "$#" -eq 0
+                                      wait "$launcher"
+                                      unset BROWSER_PICKER_TEST_OUTPUT
+                                    }
+
                                     run_first_run_and_picker
                                     run_and_assert_window ${browser-picker}/bin/browser-picker
                                     run_and_assert_window gtk-launch io.github.TheAnachronism.BrowserPicker
@@ -615,6 +674,7 @@
                                     run_queue_and_assert_fifo
                                     run_queue_limit_and_escape
                                     run_activation_limit
+                                    run_paused_configuration_and_live_routing
                                   '
 
                                 touch "$out"
