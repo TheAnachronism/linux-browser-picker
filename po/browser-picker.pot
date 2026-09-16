@@ -360,3 +360,15 @@ msgid "URL Condition value"
 msgstr ""
 msgid "Matching URL to test"
 msgstr ""
+msgid "Routing Rule '{id}' glob is invalid: {reason}"
+msgstr ""
+
+msgid "Routing Rule '{id}' regular expression is invalid: {reason}"
+msgstr ""
+
+msgid "Glob"
+msgstr ""
+
+msgid "Regular expression"
+msgstr ""
+

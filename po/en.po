@@ -394,3 +394,15 @@ msgid "URL Condition value"
 msgstr "URL Condition value"
 msgid "Matching URL to test"
 msgstr "Matching URL to test"
+msgid "Routing Rule '{id}' glob is invalid: {reason}"
+msgstr "Routing Rule '{id}' glob is invalid: {reason}"
+
+msgid "Routing Rule '{id}' regular expression is invalid: {reason}"
+msgstr "Routing Rule '{id}' regular expression is invalid: {reason}"
+
+msgid "Glob"
+msgstr "Glob"
+
+msgid "Regular expression"
+msgstr "Regular expression"
+

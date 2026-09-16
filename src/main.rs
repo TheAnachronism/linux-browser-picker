@@ -7,6 +7,7 @@ mod open_target;
 mod routing;
 mod routing_editor;
 mod setup;
+mod url_pattern;
 
 use std::env;
 

@@ -743,3 +743,361 @@ fn ipv6_literal_host_matches_without_double_brackets() {
     );
     assert_eq!(wait_for_file(&received), format!("--ipv6\n{target}\n"));
 }
+
+fn pattern_rule_config(executable: &std::path::Path, condition: &str, action: &str) -> String {
+    let mode = if action == "preselect" {
+        "private"
+    } else {
+        "normal"
+    };
+    format!(
+        "version = 1\n\n[[destinations]]\nid = \"controlled\"\nlabel = \"Controlled Browser\"\n\n[destinations.application]\ntype = \"manual\"\nexecutable = \"{}\"\nargs = [\"--matched\", \"{{target}}\"]\nprivate_args = [\"--private\", \"{{target}}\"]\n\n[[destinations]]\nid = \"fallback\"\nlabel = \"Fallback Browser\"\n\n[destinations.application]\ntype = \"manual\"\nexecutable = \"{}\"\nargs = [\"--fallback\", \"{{target}}\"]\n\n[[rules]]\nid = \"pattern\"\nname = \"Pattern\"\nenabled = true\n\n[rules.action]\ntype = \"{}\"\ndestination = \"controlled\"\nmode = \"{}\"\n\n[[rules.groups]]\n\n{}\n\n[fallback]\naction = \"open\"\ndestination = \"fallback\"\n",
+        executable.display(),
+        executable.display(),
+        action,
+        mode,
+        condition
+    )
+}
+
+#[test]
+fn glob_matches_the_entire_matching_url_with_wildcards_and_escaping() {
+    let config_home = TempDir::new().expect("temporary configuration home should be created");
+    let executable = install_fake_browser(&config_home);
+    write_raw_config(
+        &config_home,
+        &pattern_rule_config(
+            &executable,
+            "[[rules.groups.conditions]]\ntype = \"glob\"\nvalue = \"https://*.example.com/\\\\?/a*\"\n",
+            "open",
+        ),
+    );
+    let received = config_home.path().join("received-argv");
+    let target = "https://news.example.com/?/a/b?q=1";
+
+    let output = browser_picker(&config_home)
+        .env("BROWSER_PICKER_TEST_OUTPUT", &received)
+        .arg(target)
+        .output()
+        .expect("Browser Picker should start");
+
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(wait_for_file(&received), format!("--matched\n{target}\n"));
+}
+
+#[test]
+fn glob_requires_explicit_wildcards_for_substring_matches() {
+    let config_home = TempDir::new().expect("temporary configuration home should be created");
+    let executable = install_fake_browser(&config_home);
+    write_raw_config(
+        &config_home,
+        &pattern_rule_config(
+            &executable,
+            "[[rules.groups.conditions]]\ntype = \"glob\"\nvalue = \"example.com\"\n",
+            "open",
+        ),
+    );
+    let received = config_home.path().join("received-argv");
+
+    let output = browser_picker(&config_home)
+        .env("BROWSER_PICKER_TEST_OUTPUT", &received)
+        .arg("https://example.com/path")
+        .output()
+        .expect("Browser Picker should start");
+
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        wait_for_file(&received),
+        "--fallback\nhttps://example.com/path\n"
+    );
+}
+
+#[test]
+fn glob_can_ignore_path_case_when_requested() {
+    let config_home = TempDir::new().expect("temporary configuration home should be created");
+    let executable = install_fake_browser(&config_home);
+    write_raw_config(
+        &config_home,
+        &pattern_rule_config(
+            &executable,
+            "[[rules.groups.conditions]]\ntype = \"glob\"\nvalue = \"https://example.com/docs*\"\ncase_insensitive = true\n",
+            "open",
+        ),
+    );
+    let received = config_home.path().join("received-argv");
+    let target = "https://example.com/DOCS/Guide";
+
+    let output = browser_picker(&config_home)
+        .env("BROWSER_PICKER_TEST_OUTPUT", &received)
+        .arg(target)
+        .output()
+        .expect("Browser Picker should start");
+
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(wait_for_file(&received), format!("--matched\n{target}\n"));
+}
+
+#[test]
+fn glob_matches_ascii_matching_url_instead_of_unicode_host_spelling() {
+    let config_home = TempDir::new().expect("temporary configuration home should be created");
+    let executable = install_fake_browser(&config_home);
+    write_raw_config(
+        &config_home,
+        &pattern_rule_config(
+            &executable,
+            "[[rules.groups.conditions]]\ntype = \"glob\"\nvalue = \"https://*.xn--bcher-kva.example/*\"\n",
+            "open",
+        ),
+    );
+    let received = config_home.path().join("received-argv");
+    let target = "https://review.bücher.example/Path";
+
+    let output = browser_picker(&config_home)
+        .env("BROWSER_PICKER_TEST_OUTPUT", &received)
+        .arg(target)
+        .output()
+        .expect("Browser Picker should start");
+
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(wait_for_file(&received), format!("--matched\n{target}\n"));
+}
+
+#[test]
+fn regex_matches_the_entire_matching_url() {
+    let config_home = TempDir::new().expect("temporary configuration home should be created");
+    let executable = install_fake_browser(&config_home);
+    write_raw_config(
+        &config_home,
+        &pattern_rule_config(
+            &executable,
+            "[[rules.groups.conditions]]\ntype = \"regex\"\nvalue = \"https://docs\\\\.example\\\\.com/.*\"\n",
+            "open",
+        ),
+    );
+    let received = config_home.path().join("received-argv");
+    let target = "https://docs.example.com/guide#top";
+
+    let output = browser_picker(&config_home)
+        .env("BROWSER_PICKER_TEST_OUTPUT", &received)
+        .arg(target)
+        .output()
+        .expect("Browser Picker should start");
+
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(wait_for_file(&received), format!("--matched\n{target}\n"));
+}
+
+#[test]
+fn regex_does_not_substring_match_without_wildcards() {
+    let config_home = TempDir::new().expect("temporary configuration home should be created");
+    let executable = install_fake_browser(&config_home);
+    write_raw_config(
+        &config_home,
+        &pattern_rule_config(
+            &executable,
+            "[[rules.groups.conditions]]\ntype = \"regex\"\nvalue = \"docs\\\\.example\\\\.com\"\n",
+            "open",
+        ),
+    );
+    let received = config_home.path().join("received-argv");
+
+    let output = browser_picker(&config_home)
+        .env("BROWSER_PICKER_TEST_OUTPUT", &received)
+        .arg("https://docs.example.com/guide")
+        .output()
+        .expect("Browser Picker should start");
+
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        wait_for_file(&received),
+        "--fallback\nhttps://docs.example.com/guide\n"
+    );
+}
+
+#[test]
+fn negated_regex_in_or_group_can_preselect_without_dispatch() {
+    let config_home = TempDir::new().expect("temporary configuration home should be created");
+    let executable = install_fake_browser(&config_home);
+    write_raw_config(
+        &config_home,
+        &pattern_rule_config(
+            &executable,
+            "[[rules.groups.conditions]]\ntype = \"regex\"\nvalue = \"https://ads\\\\.example/.*\"\nnegate = true\n\n[[rules.groups.conditions]]\ntype = \"glob\"\nvalue = \"https://*.example/*\"\n",
+            "preselect",
+        ),
+    );
+    let received = config_home.path().join("received-argv");
+    let mut child = browser_picker(&config_home)
+        .env("BROWSER_PICKER_TEST_OUTPUT", &received)
+        .arg("https://news.example/story")
+        .spawn()
+        .expect("Browser Picker should start");
+    thread::sleep(Duration::from_millis(300));
+    assert!(
+        received.exists() == false,
+        "Preselection must queue instead of dispatching"
+    );
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+#[test]
+fn empty_patterns_are_rejected_before_routing() {
+    for (kind, label) in [("glob", "glob"), ("regex", "regular expression")] {
+        let config_home = TempDir::new().expect("temporary configuration home should be created");
+        write_raw_config(
+            &config_home,
+            &format!(
+                "version = 1\n\n[[destinations]]\nid = \"controlled\"\nlabel = \"Controlled Browser\"\n\n[destinations.application]\ntype = \"manual\"\nexecutable = \"/bin/true\"\nargs = [\"{{target}}\"]\n\n[[rules]]\nid = \"pattern\"\nname = \"Pattern\"\nenabled = true\n\n[rules.action]\ntype = \"open\"\ndestination = \"controlled\"\n\n[[rules.groups]]\n\n[[rules.groups.conditions]]\ntype = \"{kind}\"\nvalue = \"\"\n\n[fallback]\naction = \"show-picker\"\n"
+            ),
+        );
+
+        let output = browser_picker(&config_home)
+            .arg("https://example.com/")
+            .output()
+            .expect("Browser Picker should start");
+
+        assert_eq!(output.status.code(), Some(3), "{kind}");
+        let stderr = String::from_utf8(output.stderr).expect("error output should be UTF-8");
+        assert!(
+            stderr.contains(&format!("Routing Rule 'pattern' {label} is invalid")),
+            "{kind}: {stderr}"
+        );
+        assert!(stderr.contains("must not be empty"), "{kind}: {stderr}");
+        assert!(!stderr.contains("https://example.com"), "{kind}: {stderr}");
+    }
+}
+
+#[test]
+fn oversized_patterns_are_rejected_before_routing() {
+    let pattern = "a".repeat(65_537);
+    for (kind, label) in [("glob", "glob"), ("regex", "regular expression")] {
+        let config_home = TempDir::new().expect("temporary configuration home should be created");
+        write_raw_config(
+            &config_home,
+            &format!(
+                "version = 1\n\n[[destinations]]\nid = \"controlled\"\nlabel = \"Controlled Browser\"\n\n[destinations.application]\ntype = \"manual\"\nexecutable = \"/bin/true\"\nargs = [\"{{target}}\"]\n\n[[rules]]\nid = \"pattern\"\nname = \"Pattern\"\nenabled = true\n\n[rules.action]\ntype = \"open\"\ndestination = \"controlled\"\n\n[[rules.groups]]\n\n[[rules.groups.conditions]]\ntype = \"{kind}\"\nvalue = \"{pattern}\"\n\n[fallback]\naction = \"show-picker\"\n"
+            ),
+        );
+
+        let output = browser_picker(&config_home)
+            .arg("https://example.com/")
+            .output()
+            .expect("Browser Picker should start");
+
+        assert_eq!(output.status.code(), Some(3), "{kind}");
+        let stderr = String::from_utf8(output.stderr).expect("error output should be UTF-8");
+        assert!(
+            stderr.contains(&format!("Routing Rule 'pattern' {label} is invalid")),
+            "{kind}: {stderr}"
+        );
+        assert!(
+            stderr.contains("exceeds the 65536-byte limit"),
+            "{kind}: {stderr}"
+        );
+        assert!(!stderr.contains("https://example.com"), "{kind}: {stderr}");
+    }
+}
+
+#[test]
+fn trailing_backslash_glob_is_rejected_before_routing() {
+    let config_home = TempDir::new().expect("temporary configuration home should be created");
+    write_raw_config(
+        &config_home,
+        "version = 1\n\n[[destinations]]\nid = \"controlled\"\nlabel = \"Controlled Browser\"\n\n[destinations.application]\ntype = \"manual\"\nexecutable = \"/bin/true\"\nargs = [\"{target}\"]\n\n[[rules]]\nid = \"pattern\"\nname = \"Pattern\"\nenabled = true\n\n[rules.action]\ntype = \"open\"\ndestination = \"controlled\"\n\n[[rules.groups]]\n\n[[rules.groups.conditions]]\ntype = \"glob\"\nvalue = \"https://example.com/\\\\\"\n\n[fallback]\naction = \"show-picker\"\n",
+    );
+
+    let output = browser_picker(&config_home)
+        .arg("https://example.com/")
+        .output()
+        .expect("Browser Picker should start");
+
+    assert_eq!(output.status.code(), Some(3));
+    let stderr = String::from_utf8(output.stderr).expect("error output should be UTF-8");
+    assert!(stderr.contains("Routing Rule 'pattern' glob is invalid"));
+    assert!(stderr.contains("trailing backslash"));
+}
+
+#[test]
+fn regex_rejects_backreferences_and_look_around() {
+    for source in [r#"value = "(a)\\1""#, r#"value = "(?=https)""#] {
+        let config_home = TempDir::new().expect("temporary configuration home should be created");
+        write_raw_config(
+            &config_home,
+            &format!(
+                "version = 1\n\n[[destinations]]\nid = \"controlled\"\nlabel = \"Controlled Browser\"\n\n[destinations.application]\ntype = \"manual\"\nexecutable = \"/bin/true\"\nargs = [\"{{target}}\"]\n\n[[rules]]\nid = \"pattern\"\nname = \"Pattern\"\nenabled = true\n\n[rules.action]\ntype = \"open\"\ndestination = \"controlled\"\n\n[[rules.groups]]\n\n[[rules.groups.conditions]]\ntype = \"regex\"\n{source}\n\n[fallback]\naction = \"show-picker\"\n"
+            ),
+        );
+
+        let output = browser_picker(&config_home)
+            .arg("https://example.com/")
+            .output()
+            .expect("Browser Picker should start");
+
+        let stderr = String::from_utf8(output.stderr).expect("error output should be UTF-8");
+        assert_eq!(
+            output.status.code(),
+            Some(3),
+            "source={source} stderr={stderr}"
+        );
+        assert!(
+            stderr.contains("Routing Rule 'pattern' regular expression is invalid"),
+            "{stderr}"
+        );
+        assert!(!stderr.contains("https://example.com"), "{stderr}");
+    }
+}
+
+#[test]
+fn hostile_regex_still_routes_in_bounded_time() {
+    let config_home = TempDir::new().expect("temporary configuration home should be created");
+    let executable = install_fake_browser(&config_home);
+    let nested = "a?".repeat(40) + &"a".repeat(40);
+    write_raw_config(
+        &config_home,
+        &pattern_rule_config(
+            &executable,
+            &format!("[[rules.groups.conditions]]\ntype = \"regex\"\nvalue = \"{nested}\"\n"),
+            "open",
+        ),
+    );
+    let received = config_home.path().join("received-argv");
+    let target = format!("https://example.com/{}", "a".repeat(40));
+
+    let output = browser_picker(&config_home)
+        .env("BROWSER_PICKER_TEST_OUTPUT", &received)
+        .arg(&target)
+        .output()
+        .expect("Browser Picker should start");
+
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(wait_for_file(&received), format!("--fallback\n{target}\n"));
+}

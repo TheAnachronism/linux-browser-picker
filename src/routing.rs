@@ -249,6 +249,22 @@ fn condition_matches(condition: &UrlCondition, target: &WebTarget) -> bool {
             }),
             *negate,
         ),
+        UrlCondition::Glob {
+            value,
+            case_insensitive,
+            negate,
+        } => (
+            crate::url_pattern::glob_matches(value, target.matching_url(), *case_insensitive),
+            *negate,
+        ),
+        UrlCondition::Regex {
+            value,
+            case_insensitive,
+            negate,
+        } => (
+            crate::url_pattern::regex_matches(value, target.matching_url(), *case_insensitive),
+            *negate,
+        ),
     };
     matched != negate
 }
@@ -339,6 +355,28 @@ fn describe_condition(condition: &UrlCondition) -> String {
             *negate,
             format!(
                 "query contains {key:?}={value:?} ({})",
+                sensitivity(*case_insensitive)
+            ),
+        ),
+        UrlCondition::Glob {
+            value,
+            case_insensitive,
+            negate,
+        } => described(
+            *negate,
+            format!(
+                "glob {value:?} matches the Matching URL ({})",
+                sensitivity(*case_insensitive)
+            ),
+        ),
+        UrlCondition::Regex {
+            value,
+            case_insensitive,
+            negate,
+        } => described(
+            *negate,
+            format!(
+                "regular expression {value:?} matches the Matching URL ({})",
                 sensitivity(*case_insensitive)
             ),
         ),

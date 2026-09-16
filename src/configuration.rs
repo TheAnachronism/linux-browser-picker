@@ -113,6 +113,20 @@ pub enum UrlCondition {
         #[serde(default)]
         negate: bool,
     },
+    Glob {
+        value: String,
+        #[serde(default)]
+        case_insensitive: bool,
+        #[serde(default)]
+        negate: bool,
+    },
+    Regex {
+        value: String,
+        #[serde(default)]
+        case_insensitive: bool,
+        #[serde(default)]
+        negate: bool,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -157,6 +171,8 @@ pub enum Error {
     InvalidRuleHost(String),
     EmptyRuleGroups(String),
     EmptyConditionGroup(String),
+    InvalidRuleGlob(String, String),
+    InvalidRuleRegex(String, String),
     UnknownDestination(String),
     UnsupportedPrivateMode(String),
     UnknownFallback(String),
@@ -249,6 +265,14 @@ impl Error {
             Self::EmptyConditionGroup(id) => i18n::text_with(
                 "Routing Rule '{id}' condition groups must not be empty",
                 &[("{id}", id)],
+            ),
+            Self::InvalidRuleGlob(id, reason) => i18n::text_with(
+                "Routing Rule '{id}' glob is invalid: {reason}",
+                &[("{id}", id), ("{reason}", reason)],
+            ),
+            Self::InvalidRuleRegex(id, reason) => i18n::text_with(
+                "Routing Rule '{id}' regular expression is invalid: {reason}",
+                &[("{id}", id), ("{reason}", reason)],
             ),
             Self::UnknownDestination(id) => i18n::text_with(
                 "Routing action references unknown destination '{id}'",
@@ -480,6 +504,18 @@ fn validate_rule(
                         }
                         ascii
                     };
+                }
+                UrlCondition::Glob { value, .. } => {
+                    crate::url_pattern::validate_glob(value)
+                        .map_err(|reason| Error::InvalidRuleGlob(rule.id.clone(), reason))?;
+                }
+                UrlCondition::Regex {
+                    value,
+                    case_insensitive,
+                    ..
+                } => {
+                    crate::url_pattern::validate_regex(value, *case_insensitive)
+                        .map_err(|reason| Error::InvalidRuleRegex(rule.id.clone(), reason))?;
                 }
                 _ => {}
             }

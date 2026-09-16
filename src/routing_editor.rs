@@ -21,10 +21,12 @@ enum ConditionKind {
     PathPrefix,
     QueryKey,
     QueryValue,
+    Glob,
+    Regex,
 }
 
 impl ConditionKind {
-    const ALL: [Self; 7] = [
+    const ALL: [Self; 9] = [
         Self::Scheme,
         Self::Host,
         Self::Port,
@@ -32,6 +34,8 @@ impl ConditionKind {
         Self::PathPrefix,
         Self::QueryKey,
         Self::QueryValue,
+        Self::Glob,
+        Self::Regex,
     ];
 
     fn label(self) -> &'static str {
@@ -43,10 +47,12 @@ impl ConditionKind {
             Self::PathPrefix => "Path prefix",
             Self::QueryKey => "Query key",
             Self::QueryValue => "Query value",
+            Self::Glob => "Glob",
+            Self::Regex => "Regular expression",
         }
     }
 
-    fn labels() -> [&'static str; 7] {
+    fn labels() -> [&'static str; 9] {
         Self::ALL.map(Self::label)
     }
 
@@ -72,6 +78,8 @@ impl ConditionKind {
             } => Self::PathPrefix,
             UrlCondition::QueryKey { .. } => Self::QueryKey,
             UrlCondition::QueryValue { .. } => Self::QueryValue,
+            UrlCondition::Glob { .. } => Self::Glob,
+            UrlCondition::Regex { .. } => Self::Regex,
         }
     }
 }
@@ -498,6 +506,22 @@ fn build_condition(condition: UrlCondition) -> (ConditionWidgets, gtk::Box) {
             *case_insensitive,
             *negate,
         ),
+        UrlCondition::Glob {
+            value,
+            case_insensitive,
+            negate,
+        }
+        | UrlCondition::Regex {
+            value,
+            case_insensitive,
+            negate,
+        } => (
+            "".to_owned(),
+            value.clone(),
+            false,
+            *case_insensitive,
+            *negate,
+        ),
     };
     kind.set_selected(ConditionKind::from_condition(&condition) as u32);
     let key = entry(&key_text, "URL Condition query key");
@@ -595,6 +619,16 @@ fn collect_condition(condition: &ConditionWidgets) -> UrlCondition {
         },
         ConditionKind::QueryValue => UrlCondition::QueryValue {
             key,
+            value,
+            case_insensitive,
+            negate,
+        },
+        ConditionKind::Glob => UrlCondition::Glob {
+            value,
+            case_insensitive,
+            negate,
+        },
+        ConditionKind::Regex => UrlCondition::Regex {
             value,
             case_insensitive,
             negate,
