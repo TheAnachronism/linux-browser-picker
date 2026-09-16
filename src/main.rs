@@ -11,7 +11,7 @@ mod url_pattern;
 
 use std::env;
 
-const HELP: &str = "Browser Picker\nChoose where links and local files open.\n\nUsage:\n  browser-picker\n  browser-picker <http(s)-url>\n  browser-picker --help\n  browser-picker --version\n\nOptions:\n  -h, --help       Show this help\n  -V, --version    Show version\n";
+const HELP: &str = "Browser Picker\nChoose where links and local files open.\n\nUsage:\n  browser-picker\n  browser-picker <http(s)-url|file>\n  browser-picker --help\n  browser-picker --version\n\nOptions:\n  -h, --help       Show this help\n  -V, --version    Show version\n";
 const STATUS_INVALID_TARGET: u8 = 2;
 const STATUS_CONFIGURATION: u8 = 3;
 const STATUS_LAUNCH: u8 = 4;
@@ -77,16 +77,7 @@ fn routing_error_message(error: routing::Error) -> (String, u8) {
 }
 
 fn target_error_message(error: open_target::Error) -> String {
-    match error {
-        open_target::Error::InvalidUtf8 => i18n::text("Open Target must be valid UTF-8"),
-        open_target::Error::TooLarge => i18n::text("Open Target exceeds the 65536-byte limit"),
-        open_target::Error::Malformed => {
-            i18n::text("Invalid Open Target: expected an absolute HTTP or HTTPS URL")
-        }
-        open_target::Error::UnsupportedScheme => {
-            i18n::text("Unsupported Open Target scheme; expected HTTP or HTTPS")
-        }
-    }
+    error.message()
 }
 
 fn configuration_error_message(error: configuration::Error) -> String {

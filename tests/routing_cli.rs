@@ -117,7 +117,7 @@ fn malformed_url_fails_with_a_target_status() {
     assert!(output.stdout.is_empty());
     assert_eq!(
         String::from_utf8(output.stderr).expect("error output should be UTF-8"),
-        "Invalid Open Target: expected an absolute HTTP or HTTPS URL\n"
+        "Invalid Open Target: expected an existing regular local file or an absolute HTTP or HTTPS URL\n"
     );
 }
 
@@ -138,7 +138,7 @@ fn unsupported_url_scheme_fails_without_revealing_url_secrets() {
     assert!(output.stdout.is_empty());
     assert_eq!(
         stderr,
-        "Unsupported Open Target scheme; expected HTTP or HTTPS\n"
+        "Unsupported Open Target scheme; expected HTTP, HTTPS, or a local file\n"
     );
     assert!(!stderr.contains(secret));
     assert!(!stderr.contains("password"));
@@ -1100,4 +1100,157 @@ fn hostile_regex_still_routes_in_bounded_time() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert_eq!(wait_for_file(&received), format!("--fallback\n{target}\n"));
+}
+
+fn write_html_file(directory: &std::path::Path, name: &str) -> std::path::PathBuf {
+    fs::create_dir_all(directory).expect("file fixture directory should be writable");
+    let path = directory.join(name);
+    fs::write(&path, "<html></html>").expect("HTML fixture should be writable");
+    path
+}
+
+fn assert_queued_without_dispatch(config_home: &TempDir, argument: &std::ffi::OsStr) {
+    let received = config_home.path().join("received-argv");
+    let mut child = browser_picker(config_home)
+        .env("BROWSER_PICKER_TEST_OUTPUT", &received)
+        .arg(argument)
+        .spawn()
+        .expect("Browser Picker should start");
+    thread::sleep(Duration::from_millis(300));
+    assert!(
+        received.exists() == false,
+        "local files must not dispatch automatically"
+    );
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+#[test]
+fn local_file_path_requires_the_picker_even_with_automatic_fallback() {
+    let config_home = TempDir::new().expect("temporary configuration home should be created");
+    let executable = install_fake_browser(&config_home);
+    write_config(&config_home, &executable);
+    let path = write_html_file(config_home.path(), "page.html");
+    assert_queued_without_dispatch(&config_home, path.as_os_str());
+}
+
+#[test]
+fn local_file_uri_and_localhost_alias_require_the_picker() {
+    let config_home = TempDir::new().expect("temporary configuration home should be created");
+    let executable = install_fake_browser(&config_home);
+    write_config(&config_home, &executable);
+    let path = write_html_file(config_home.path(), "uri.html");
+    let uri = format!("file://{}", path.display());
+    let localhost = format!("file://localhost{}", path.display());
+    assert_queued_without_dispatch(&config_home, std::ffi::OsStr::new(&uri));
+    assert_queued_without_dispatch(&config_home, std::ffi::OsStr::new(&localhost));
+}
+
+#[test]
+fn relative_and_dot_segments_are_normalized_without_following_symlink_parents() {
+    let config_home = TempDir::new().expect("temporary configuration home should be created");
+    let executable = install_fake_browser(&config_home);
+    write_config(&config_home, &executable);
+    let jail = config_home.path().join("jail");
+    let visible = write_html_file(&jail.join("visible"), "doc.html");
+    let outside = write_html_file(&config_home.path().join("outside"), "secret.html");
+    std::os::unix::fs::symlink(&outside.parent().unwrap(), jail.join("link"))
+        .expect("symlink fixture should be created");
+
+    let nested = jail.join("visible").join("nested");
+    fs::create_dir(&nested).expect("nested directory should be writable");
+    let received = config_home.path().join("received-argv");
+    let output = browser_picker(&config_home)
+        .current_dir(&nested)
+        .env("BROWSER_PICKER_TEST_OUTPUT", &received)
+        .arg("./../doc.html")
+        .output()
+        .expect("Browser Picker should start");
+    assert_ne!(
+        output.status.code(),
+        Some(2),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(received.exists() == false);
+    let _ = visible;
+
+    let output = browser_picker(&config_home)
+        .arg(jail.join("link").join("..").join("secret.html"))
+        .output()
+        .expect("Browser Picker should start");
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8(output.stderr).expect("error output should be UTF-8");
+    assert_eq!(
+        stderr,
+        "Open Target must be an existing regular local file\n"
+    );
+    assert!(!stderr.contains("secret.html"));
+}
+
+#[test]
+fn symlink_to_a_regular_file_is_accepted_and_directory_symlink_is_rejected() {
+    let config_home = TempDir::new().expect("temporary configuration home should be created");
+    let executable = install_fake_browser(&config_home);
+    write_config(&config_home, &executable);
+    let path = write_html_file(config_home.path(), "target.html");
+    let file_link = config_home.path().join("alias.html");
+    std::os::unix::fs::symlink(&path, &file_link).expect("file symlink should be created");
+    assert_queued_without_dispatch(&config_home, file_link.as_os_str());
+
+    let dir_link = config_home.path().join("dir-alias");
+    std::os::unix::fs::symlink(config_home.path(), &dir_link)
+        .expect("directory symlink should be created");
+    let output = browser_picker(&config_home)
+        .arg(&dir_link)
+        .output()
+        .expect("Browser Picker should start");
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8(output.stderr).expect("error output should be UTF-8");
+    assert_eq!(
+        stderr,
+        "Open Target must be an existing regular local file\n"
+    );
+}
+
+#[test]
+fn directories_missing_paths_fifos_and_remote_file_uris_are_rejected() {
+    let config_home = TempDir::new().expect("temporary configuration home should be created");
+    let executable = install_fake_browser(&config_home);
+    write_config(&config_home, &executable);
+    let fifo = config_home.path().join("pipe");
+    assert!(
+        Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .expect("mkfifo should run")
+            .success()
+    );
+
+    for argument in [
+        config_home.path().as_os_str().to_os_string(),
+        config_home.path().join("missing.html").into_os_string(),
+        fifo.into_os_string(),
+        std::ffi::OsString::from("file://example.com/tmp/page.html"),
+    ] {
+        let output = browser_picker(&config_home)
+            .arg(&argument)
+            .output()
+            .expect("Browser Picker should start");
+        assert_eq!(output.status.code(), Some(2), "{argument:?}");
+        let stderr = String::from_utf8(output.stderr).expect("error output should be UTF-8");
+        assert!(!stderr.contains("page.html"), "{stderr}");
+        assert!(!stderr.contains("missing.html"), "{stderr}");
+        if argument.to_string_lossy().starts_with("file://example.com") {
+            assert_eq!(
+                stderr,
+                "Unsupported Open Target: remote file URIs are not accepted\n"
+            );
+        } else {
+            assert_eq!(
+                stderr,
+                "Open Target must be an existing regular local file\n"
+            );
+        }
+    }
 }

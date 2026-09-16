@@ -14,7 +14,7 @@ use crate::configuration::{
 };
 use crate::discovery::{self, BrowserCandidate};
 use crate::i18n;
-use crate::open_target::WebTarget;
+use crate::open_target::OpenTarget;
 use crate::routing;
 use crate::routing_editor::{self, RoutingRuleEditor};
 
@@ -89,13 +89,13 @@ pub fn present(
             .build();
         content.append(&waiting);
         let host = gtk::Label::builder()
-            .label(target.target.unicode_host())
+            .label(target.target.title())
             .xalign(0.0)
             .selectable(true)
             .build();
         host.add_css_class("heading");
         host.update_property(&[gtk::accessible::Property::Description(
-            "Waiting Open Target host",
+            "Waiting Open Target",
         )]);
         content.append(&host);
     }
@@ -263,11 +263,17 @@ pub fn present(
                     .set_label(&i18n::text("Open an URL to test Routing Rules."));
                 return;
             }
-            let target = match WebTarget::parse(OsStr::new(sample.as_str())) {
-                Ok(target) => target,
+            let target = match OpenTarget::parse(OsStr::new(sample.as_str())) {
+                Ok(OpenTarget::File(_)) => {
+                    rule_editor
+                        .explanation
+                        .set_label(&routing_editor::file_explanation());
+                    return;
+                }
+                Ok(OpenTarget::Web(target)) => target,
                 Err(_) => {
                     rule_editor.explanation.set_label(&i18n::text(
-                        "Invalid Open Target: expected an absolute HTTP or HTTPS URL",
+                        "Invalid Open Target: expected an existing regular local file or an absolute HTTP or HTTPS URL",
                     ));
                     return;
                 }

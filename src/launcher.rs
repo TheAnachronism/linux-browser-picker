@@ -5,7 +5,7 @@ use gtk::gio::prelude::AppInfoExt;
 
 use crate::configuration::{BrowserDestination, DestinationLaunch};
 use crate::discovery;
-use crate::open_target::WebTarget;
+use crate::open_target::OpenTarget;
 
 pub enum FailureReason {
     NotFound,
@@ -20,7 +20,7 @@ pub struct Error {
 
 pub fn dispatch(
     destination: &BrowserDestination,
-    target: &WebTarget,
+    target: &OpenTarget,
     private: bool,
 ) -> Result<(), Error> {
     match &destination.launch {

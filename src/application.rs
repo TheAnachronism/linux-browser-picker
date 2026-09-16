@@ -12,7 +12,7 @@ use gtk::glib;
 use crate::configuration::{self, BrowserDestination, DestinationLaunch, LaunchMode};
 use crate::i18n;
 use crate::launcher;
-use crate::open_target::WebTarget;
+use crate::open_target::OpenTarget;
 use crate::routing::{self, Preselection};
 use crate::setup;
 
@@ -22,7 +22,7 @@ const MAX_PENDING_REQUESTS: usize = 100;
 const STATUS_OVERFLOW: u8 = 6;
 #[derive(Clone, Debug)]
 pub(crate) struct PendingRequest {
-    pub target: WebTarget,
+    pub target: OpenTarget,
     pub preselection: Option<Preselection>,
 }
 
@@ -325,16 +325,16 @@ pub(crate) fn show_picker(application: &adw::Application, session: PickerSession
     content.set_margin_end(18);
 
     let host = gtk::Label::builder()
-        .label(current.target.unicode_host())
+        .label(current.target.title())
         .xalign(0.0)
         .selectable(true)
         .build();
     host.add_css_class("title-1");
-    host.update_property(&[gtk::accessible::Property::Description("Open Target host")]);
+    host.update_property(&[gtk::accessible::Property::Description("Open Target title")]);
     content.append(&host);
 
     let host_details = gtk::Label::builder()
-        .label(host_forms(&current.target))
+        .label(&current.target.summary())
         .xalign(0.0)
         .selectable(true)
         .build();
@@ -349,13 +349,13 @@ pub(crate) fn show_picker(application: &adw::Application, session: PickerSession
     session.remaining.borrow().set(Some(&remaining));
     content.append(&remaining);
 
-    let reveal = gtk::CheckButton::with_label(&i18n::text("Reveal full URL details"));
+    let reveal = gtk::CheckButton::with_label(&current.target.reveal_label());
     reveal.update_property(&[gtk::accessible::Property::Description(
-        "Reveals credentials, path, query, and fragment",
+        current.target.reveal_description().as_str(),
     )]);
     content.append(&reveal);
     let full_target = gtk::Label::builder()
-        .label(current.target.as_str())
+        .label(current.target.reveal_text())
         .xalign(0.0)
         .wrap(true)
         .selectable(true)
@@ -856,20 +856,6 @@ fn pending_count_text(count: usize) -> String {
     }
 }
 
-fn host_forms(target: &WebTarget) -> String {
-    if target.unicode_host() == target.ascii_host() {
-        i18n::text_with("Host: {host}", &[("{host}", target.ascii_host())])
-    } else {
-        i18n::text_with(
-            "Unicode host: {unicode}\nASCII host: {ascii}",
-            &[
-                ("{unicode}", target.unicode_host()),
-                ("{ascii}", target.ascii_host()),
-            ],
-        )
-    }
-}
-
 fn present_current_target(
     host: &gtk::Label,
     host_details: &gtk::Label,
@@ -877,11 +863,15 @@ fn present_current_target(
     reveal: &gtk::CheckButton,
     error: &gtk::Label,
     search: &gtk::SearchEntry,
-    target: &WebTarget,
+    target: &OpenTarget,
 ) {
-    host.set_label(target.unicode_host());
-    host_details.set_label(&host_forms(target));
-    full_target.set_label(target.as_str());
+    host.set_label(target.title());
+    host_details.set_label(&target.summary());
+    full_target.set_label(target.reveal_text());
+    reveal.set_label(Some(&target.reveal_label()));
+    reveal.update_property(&[gtk::accessible::Property::Description(
+        target.reveal_description().as_str(),
+    )]);
     reveal.set_active(false);
     error.set_visible(false);
     error.set_label("");
@@ -1023,6 +1013,12 @@ fn launch_destination(
             "Browser Destination '{label}' is unavailable: {reason}. Use Repair to configure another destination.",
             &[("{label}", &destination.label), ("{reason}", reason)],
         ));
+        surface.error.set_visible(true);
+        surface.error.grab_focus();
+        return;
+    }
+    if let Err(failure) = request.target.revalidate() {
+        surface.error.set_label(&failure.message());
         surface.error.set_visible(true);
         surface.error.grab_focus();
         return;

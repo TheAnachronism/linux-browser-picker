@@ -200,6 +200,101 @@
                                       trap - EXIT
                                     }
 
+                                    run_local_file_actions() {
+                                      export BROWSER_PICKER_TEST_OUTPUT="$TMPDIR/file-argv"
+                                      rm -f "$BROWSER_PICKER_TEST_OUTPUT"
+                                      mkdir -p "$TMPDIR/docs"
+                                      printf x > "$TMPDIR/docs/page.html"
+                                      file="$TMPDIR/docs/page.html"
+                                      uri="file://$file"
+                                      ${browser-picker}/bin/browser-picker "$file" &
+                                      launcher=$!
+                                      window=
+                                      for attempt in $(seq 1 100); do
+                                        set -- $(xdotool search --onlyvisible --name "^Browser Picker$" 2>/dev/null || true)
+                                        if [ "$#" -gt 0 ]; then
+                                          window=$1
+                                          break
+                                        fi
+                                        sleep 0.1
+                                      done
+                                      test -n "$window"
+                                      test ! -f "$BROWSER_PICKER_TEST_OUTPUT"
+                                      xdotool windowfocus --sync "$window"
+                                      xdotool type "work profile"
+                                      xdotool key Down
+                                      xdotool key ctrl+shift+p
+                                      xdotool key alt+2
+                                      for attempt in $(seq 1 100); do
+                                        test -f "$BROWSER_PICKER_TEST_OUTPUT" && break
+                                        sleep 0.1
+                                      done
+                                      test "$(cat "$BROWSER_PICKER_TEST_OUTPUT")" = "--private
+                $uri"
+                                      wait "$launcher"
+
+                                      rm -f "$BROWSER_PICKER_TEST_OUTPUT"
+                                      printf x > "$TMPDIR/docs/queued.html"
+                                      queued="$TMPDIR/docs/queued.html"
+                                      automatic="https://automatic.example/path"
+                                      ${browser-picker}/bin/browser-picker "$queued" "$automatic" &
+                                      launcher=$!
+                                      window=
+                                      for attempt in $(seq 1 100); do
+                                        set -- $(xdotool search --onlyvisible --name "^Browser Picker$" 2>/dev/null || true)
+                                        if [ "$#" -gt 0 ]; then
+                                          window=$1
+                                          break
+                                        fi
+                                        sleep 0.1
+                                      done
+                                      test -n "$window"
+                                      for attempt in $(seq 1 100); do
+                                        test -f "$BROWSER_PICKER_TEST_OUTPUT" && break
+                                        sleep 0.1
+                                      done
+                                      test "$(cat "$BROWSER_PICKER_TEST_OUTPUT")" = "--normal
+                $automatic"
+                                      kill -0 "$launcher"
+                                      xdotool windowfocus --sync "$window"
+                                      xdotool key alt+2
+                                      for attempt in $(seq 1 100); do
+                                        actual_lines=$(wc -l < "$BROWSER_PICKER_TEST_OUTPUT" 2>/dev/null || printf 0)
+                                        test "$actual_lines" -lt 4 || break
+                                        sleep 0.1
+                                      done
+                                      test "$(cat "$BROWSER_PICKER_TEST_OUTPUT")" = "--normal
+                $automatic
+                --normal
+                file://$queued"
+                                      wait "$launcher"
+
+                                      rm -f "$BROWSER_PICKER_TEST_OUTPUT"
+                                      printf x > "$TMPDIR/docs/race.html"
+                                      raced="$TMPDIR/docs/race.html"
+                                      ${browser-picker}/bin/browser-picker "$raced" &
+                                      launcher=$!
+                                      window=
+                                      for attempt in $(seq 1 100); do
+                                        set -- $(xdotool search --onlyvisible --name "^Browser Picker$" 2>/dev/null || true)
+                                        if [ "$#" -gt 0 ]; then
+                                          window=$1
+                                          break
+                                        fi
+                                        sleep 0.1
+                                      done
+                                      test -n "$window"
+                                      rm -f "$raced"
+                                      xdotool windowfocus --sync "$window"
+                                      xdotool key alt+2
+                                      sleep 0.4
+                                      kill -0 "$launcher"
+                                      test ! -f "$BROWSER_PICKER_TEST_OUTPUT"
+                                      xdotool key --clearmodifiers ctrl+w
+                                      wait "$launcher"
+                                      unset BROWSER_PICKER_TEST_OUTPUT
+                                    }
+
                                     run_first_run_and_picker() {
                                       export XDG_CONFIG_HOME="$TMPDIR/first-run-config"
                                       mkdir -p "$XDG_CONFIG_HOME"
@@ -516,6 +611,7 @@
                                     run_picker_and_assert_launch
                                     run_routing_actions
                                     run_activation_with_preselection_and_automatic
+                                    run_local_file_actions
                                     run_queue_and_assert_fifo
                                     run_queue_limit_and_escape
                                     run_activation_limit

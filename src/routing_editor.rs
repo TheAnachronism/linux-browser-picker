@@ -8,7 +8,7 @@ use crate::configuration::{
     ConditionGroup, LaunchMode, PathComparison, RoutingAction, RoutingRule, UrlCondition,
 };
 use crate::i18n;
-use crate::open_target::WebTarget;
+use crate::open_target::OpenTarget;
 use crate::routing::RoutingEvaluation;
 
 #[derive(Clone, Copy)]
@@ -124,7 +124,7 @@ struct ConditionWidgets {
 impl RoutingRuleEditor {
     pub fn new(
         existing: &[RoutingRule],
-        target: Option<&WebTarget>,
+        target: Option<&OpenTarget>,
         destination: Option<&str>,
     ) -> Self {
         let root = gtk::Box::new(gtk::Orientation::Vertical, 9);
@@ -182,8 +182,12 @@ impl RoutingRuleEditor {
         controls.append(&down);
         root.append(&controls);
 
-        let matching = target.map(|target| target.matching_url().to_owned());
-        let target_host = target.map(|target| target.ascii_host().to_owned());
+        let matching = target
+            .and_then(OpenTarget::as_web)
+            .map(|target| target.matching_url().to_owned());
+        let target_host = target
+            .and_then(OpenTarget::as_web)
+            .map(|target| target.ascii_host().to_owned());
         let initial_destination = destination.unwrap_or_default().to_owned();
         add.connect_clicked(glib::clone!(
             #[weak]
@@ -234,7 +238,7 @@ impl RoutingRuleEditor {
         ));
 
         let sample = gtk::Entry::builder()
-            .text(target.map(WebTarget::as_str).unwrap_or_default())
+            .text(target.map(OpenTarget::as_str).unwrap_or_default())
             .placeholder_text(i18n::text("Matching URL to test"))
             .build();
         sample.update_property(&[gtk::accessible::Property::Label("Matching URL to test")]);
@@ -243,10 +247,14 @@ impl RoutingRuleEditor {
         test.update_property(&[gtk::accessible::Property::Label("Test Routing Rules")]);
         root.append(&test);
         let explanation = gtk::Label::builder()
-            .label(matching.map_or_else(
-                || i18n::text("Open an URL to test Routing Rules."),
-                |url| i18n::text_with("Matching URL: {url}", &[("{url}", &url)]),
-            ))
+            .label(match target {
+                Some(OpenTarget::File(_)) => file_explanation(),
+                Some(_) => matching.map_or_else(
+                    || i18n::text("Open an URL to test Routing Rules."),
+                    |url| i18n::text_with("Matching URL: {url}", &[("{url}", &url)]),
+                ),
+                None => i18n::text("Open an URL to test Routing Rules."),
+            })
             .xalign(0.0)
             .wrap(true)
             .selectable(true)
@@ -289,6 +297,12 @@ impl RoutingRuleEditor {
         });
         window.add_controller(controller);
     }
+}
+
+pub fn file_explanation() -> String {
+    i18n::text(
+        "Local files always require a Picker choice. Routing Rules and Fallback Action do not apply.",
+    )
 }
 
 pub fn explanation_text(evaluation: &RoutingEvaluation) -> String {

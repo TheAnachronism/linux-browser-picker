@@ -5,7 +5,7 @@ use crate::configuration::{
     RoutingAction, RoutingRule, UrlCondition,
 };
 use crate::launcher;
-use crate::open_target::{self, WebTarget};
+use crate::open_target::{self, OpenTarget, WebTarget};
 
 pub enum Error {
     InvalidTarget(open_target::Error),
@@ -23,12 +23,12 @@ pub struct Preselection {
 pub enum Outcome {
     Dispatched,
     Pick {
-        target: WebTarget,
+        target: OpenTarget,
         destinations: Vec<BrowserDestination>,
         preselection: Option<Preselection>,
     },
     Setup {
-        target: WebTarget,
+        target: OpenTarget,
     },
 }
 
@@ -67,11 +67,20 @@ pub fn route(argument: &OsStr) -> Result<Outcome, Error> {
         return Err(Error::NoGraphicalSession);
     }
 
-    let target = WebTarget::parse(argument).map_err(Error::InvalidTarget)?;
+    let target = OpenTarget::parse(argument).map_err(Error::InvalidTarget)?;
     let Some(configuration) = configuration::load_optional().map_err(Error::Configuration)? else {
         return Ok(Outcome::Setup { target });
     };
-    if let Some(rule) = first_matching_rule(&configuration.rules, &target) {
+    if matches!(target, OpenTarget::File(_)) {
+        return Ok(Outcome::Pick {
+            target,
+            destinations: configuration.destinations,
+            preselection: None,
+        });
+    }
+    if let OpenTarget::Web(web) = &target
+        && let Some(rule) = first_matching_rule(&configuration.rules, web)
+    {
         return apply_rule(rule, configuration.destinations, target);
     }
     apply_fallback(configuration.fallback, configuration.destinations, target)
@@ -149,7 +158,7 @@ fn first_matching_rule<'a>(
 fn apply_rule(
     rule: &RoutingRule,
     destinations: Vec<BrowserDestination>,
-    target: WebTarget,
+    target: OpenTarget,
 ) -> Result<Outcome, Error> {
     let (destination_id, mode, automatic) = match &rule.action {
         RoutingAction::Open { destination, mode } => (destination, *mode, true),
@@ -175,7 +184,7 @@ fn apply_rule(
 fn apply_fallback(
     fallback: FallbackAction,
     destinations: Vec<BrowserDestination>,
-    target: WebTarget,
+    target: OpenTarget,
 ) -> Result<Outcome, Error> {
     match fallback {
         FallbackAction::Open(destination_id) => {

@@ -36,7 +36,7 @@ msgid ""
 "\n"
 "Usage:\n"
 "  browser-picker\n"
-"  browser-picker <http(s)-url>\n"
+"  browser-picker <http(s)-url|file>\n"
 "  browser-picker --help\n"
 "  browser-picker --version\n"
 "\n"
@@ -54,10 +54,10 @@ msgstr ""
 msgid "Open Target exceeds the 65536-byte limit"
 msgstr ""
 
-msgid "Invalid Open Target: expected an absolute HTTP or HTTPS URL"
+msgid "Invalid Open Target: expected an existing regular local file or an absolute HTTP or HTTPS URL"
 msgstr ""
 
-msgid "Unsupported Open Target scheme; expected HTTP or HTTPS"
+msgid "Unsupported Open Target scheme; expected HTTP, HTTPS, or a local file"
 msgstr ""
 
 msgid "XDG_CONFIG_HOME must be an absolute path"
@@ -372,3 +372,21 @@ msgstr ""
 msgid "Regular expression"
 msgstr ""
 
+
+msgid "Unsupported Open Target: remote file URIs are not accepted"
+msgstr ""
+
+msgid "Open Target must be an existing regular local file"
+msgstr ""
+
+msgid "In {directory}"
+msgstr ""
+
+msgid "Reveal absolute path"
+msgstr ""
+
+msgid "Local files always require a Picker choice. Routing Rules and Fallback Action do not apply."
+msgstr ""
+
+msgid "Reveals the absolute local file path for copying"
+msgstr ""
