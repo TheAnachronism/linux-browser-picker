@@ -197,6 +197,17 @@ EOF
             pkgs.writeText "browser-picker-aarch64-defined" ''
               aarch64-linux output is build-defined but runtime-unverified until exercised on a desktop.
             '';
+          app =
+            assert self.apps.${system} ? default;
+            assert self.apps.${system}.default.type == "app";
+            pkgs.runCommand "browser-picker-app" { } ''
+              test -x ${self.apps.${system}.default.program}
+              echo "app output points at the packaged Browser Picker executable" > "$out"
+            '';
+          development-shell = self.devShells.${system}.default;
+          release-proof = pkgs.callPackage ./nix/release-proof.nix {
+            inherit browser-picker;
+          };
           gui-smoke =
             pkgs.runCommand "browser-picker-gui-smoke"
               {

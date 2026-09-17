@@ -195,6 +195,16 @@ pub fn run() -> glib::ExitCode {
 }
 
 pub(crate) fn apply_window_state(window: &adw::ApplicationWindow, name: &'static str) {
+    let accessible_name = match name {
+        "picker" => "Picker",
+        "setup" | "configuration" => "Configuration",
+        "migration" => "Configuration migration",
+        other => other,
+    };
+    gtk::prelude::AccessibleExtManual::update_property(
+        window.upcast_ref::<gtk::Widget>(),
+        &[gtk::accessible::Property::Label(accessible_name)],
+    );
     if let Some((width, height)) = crate::window_state::load(name) {
         window.set_default_size(width, height);
     }

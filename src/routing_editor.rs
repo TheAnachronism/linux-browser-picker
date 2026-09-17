@@ -244,7 +244,6 @@ impl RoutingRuleEditor {
         sample.update_property(&[gtk::accessible::Property::Label("Matching URL to test")]);
         root.append(&sample);
         let test = gtk::Button::with_label(&i18n::text("Test Rules"));
-        test.update_property(&[gtk::accessible::Property::Label("Test Routing Rules")]);
         root.append(&test);
         let explanation = gtk::Label::builder()
             .label(match target {
@@ -283,7 +282,10 @@ impl RoutingRuleEditor {
         let list = self.list.clone();
         let rules = Rc::clone(&self.rules);
         controller.connect_key_pressed(move |_, key, _, modifiers| {
-            if modifiers.contains(gtk::gdk::ModifierType::ALT_MASK) {
+            if modifiers.contains(gtk::gdk::ModifierType::ALT_MASK)
+                && !modifiers.contains(gtk::gdk::ModifierType::SHIFT_MASK)
+                && !modifiers.contains(gtk::gdk::ModifierType::CONTROL_MASK)
+            {
                 if key == gtk::gdk::Key::Up {
                     reorder(&list, &rules, -1);
                     return glib::Propagation::Stop;
