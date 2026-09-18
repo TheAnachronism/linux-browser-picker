@@ -181,6 +181,7 @@ fn route_one_shot(argument: &OsStr) -> gtk::glib::ExitCode {
         Ok(routing::Outcome::Dispatched) => gtk::glib::ExitCode::SUCCESS,
         Ok(
             routing::Outcome::Pick { .. }
+            | routing::Outcome::RecoverLaunch { .. }
             | routing::Outcome::Setup { .. }
             | routing::Outcome::Recover { .. }
             | routing::Outcome::Migrate { .. },
@@ -219,7 +220,7 @@ fn configuration_error_message(error: configuration::Error) -> String {
     error.message()
 }
 
-fn launch_error_message(error: launcher::Error) -> String {
+pub(crate) fn launch_error_message(error: launcher::Error) -> String {
     let reason = match error.reason {
         launcher::FailureReason::NotFound => i18n::text("executable was not found"),
         launcher::FailureReason::PermissionDenied => i18n::text("executable permission was denied"),

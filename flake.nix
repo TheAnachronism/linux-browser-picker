@@ -626,6 +626,144 @@ EOF
                                       unset BROWSER_PICKER_TEST_OUTPUT
                                     }
 
+                                    run_automatic_failure_recovery_and_fifo() {
+                                      cat >> "$XDG_CONFIG_HOME/browser-picker/config.toml" <<'EOF'
+
+                [[rules]]
+                id = "launch-failure"
+                name = "Launch failure"
+                enabled = true
+
+                [rules.action]
+                type = "open"
+                destination = "unavailable"
+                mode = "normal"
+
+                [[rules.groups]]
+
+                [[rules.groups.conditions]]
+                type = "host"
+                value = "launch-failure.example"
+                EOF
+                                      export BROWSER_PICKER_TEST_OUTPUT="$TMPDIR/automatic-recovery-argv"
+                                      rm -f "$BROWSER_PICKER_TEST_OUTPUT"
+                                      failed="https://launch-failure.example/failed"
+                                      printf x > "$TMPDIR/docs/recovery-queued.html"
+                                      queued="$TMPDIR/docs/recovery-queued.html"
+                                      ${browser-picker}/bin/browser-picker "$failed" "$queued" &
+                                      launcher=$!
+                                      window=
+                                      for attempt in $(seq 1 100); do
+                                        set -- $(xdotool search --onlyvisible --name "^Browser Picker$" 2>/dev/null || true)
+                                        if [ "$#" -gt 0 ]; then
+                                          window=$1
+                                          break
+                                        fi
+                                        sleep 0.1
+                                      done
+                                      test -n "$window"
+                                      python3 "$inspect" wait "executable was not found"
+                                      python3 "$inspect" assert "unavailable" "executable was not found"
+                                      test ! -f "$BROWSER_PICKER_TEST_OUTPUT"
+                                      xdotool windowfocus --sync "$window"
+                                      xdotool key --clearmodifiers alt+2
+                                      for attempt in $(seq 1 100); do
+                                        test -f "$BROWSER_PICKER_TEST_OUTPUT" && break
+                                        sleep 0.1
+                                      done
+                                      test "$(cat "$BROWSER_PICKER_TEST_OUTPUT")" = "--normal
+                $failed"
+                                      kill -0 "$launcher"
+                                      python3 "$inspect" wait "recovery-queued.html"
+                                      xdotool windowfocus --sync "$window"
+                                      xdotool key --clearmodifiers alt+2
+                                      for attempt in $(seq 1 100); do
+                                        actual_lines=$(wc -l < "$BROWSER_PICKER_TEST_OUTPUT" 2>/dev/null || printf 0)
+                                        test "$actual_lines" -lt 4 || break
+                                        sleep 0.1
+                                      done
+                                      test "$(cat "$BROWSER_PICKER_TEST_OUTPUT")" = "--normal
+                $failed
+                --normal
+                file://$queued"
+                                      wait "$launcher"
+                                      unset BROWSER_PICKER_TEST_OUTPUT
+                                    }
+
+                                    run_private_failure_preserves_intent() {
+                                      export BROWSER_PICKER_TEST_OUTPUT="$TMPDIR/private-recovery-argv"
+                                      cat >> "$XDG_CONFIG_HOME/browser-picker/config.toml" <<EOF
+
+                [[destinations]]
+                id = "firefox-work"
+                label = "Work Firefox"
+                profile_label = "Work"
+
+                [destinations.application]
+                type = "firefox-profile"
+                desktop_id = "firefox.desktop"
+                name = "Work"
+                path = "$TMPDIR/private-profile"
+
+                [[rules]]
+                id = "private-failure"
+                name = "Private failure"
+                enabled = true
+
+                [rules.action]
+                type = "open"
+                destination = "firefox-work"
+                mode = "private"
+
+                [[rules.groups]]
+
+                [[rules.groups.conditions]]
+                type = "host"
+                value = "private-failure.example"
+                EOF
+                                      mkdir -p "$TMPDIR/snap/bin" "$TMPDIR/private-profile"
+                                      cat > "$TMPDIR/snap/bin/firefox" <<'EOF'
+                #!/bin/sh
+                printf '%s\n' "$@" >> "''${BROWSER_PICKER_TEST_OUTPUT:-$TMPDIR/received-argv}"
+                EOF
+                                      chmod 700 "$TMPDIR/snap/bin/firefox"
+                                      cat > "$XDG_DATA_HOME/applications/firefox.desktop" <<EOF
+                [Desktop Entry]
+                Type=Application
+                Name=Firefox
+                Exec=$TMPDIR/snap/bin/firefox %u
+                MimeType=x-scheme-handler/http;x-scheme-handler/https;
+                Terminal=false
+                EOF
+                                      rm -f "$BROWSER_PICKER_TEST_OUTPUT"
+                                      target="https://private-failure.example/private"
+                                      ${browser-picker}/bin/browser-picker "$target" &
+                                      launcher=$!
+                                      window=
+                                      for attempt in $(seq 1 100); do
+                                        set -- $(xdotool search --onlyvisible --name "^Browser Picker$" 2>/dev/null || true)
+                                        if [ "$#" -gt 0 ]; then
+                                          window=$1
+                                          break
+                                        fi
+                                        sleep 0.1
+                                      done
+                                      test -n "$window"
+                                      python3 "$inspect" wait "private Launch Mode is not available"
+                                      python3 "$inspect" assert "firefox-work" "private Launch Mode is not available"
+                                      test ! -f "$BROWSER_PICKER_TEST_OUTPUT"
+                                      xdotool windowfocus --sync "$window"
+                                      xdotool key --clearmodifiers alt+2
+                                      for attempt in $(seq 1 100); do
+                                        test -f "$BROWSER_PICKER_TEST_OUTPUT" && break
+                                        sleep 0.1
+                                      done
+                                      test "$(cat "$BROWSER_PICKER_TEST_OUTPUT")" = "--private
+                $target"
+                                      wait "$launcher"
+                                      unset BROWSER_PICKER_TEST_OUTPUT
+                                    }
+
                                     run_activation_with_preselection_and_automatic() {
                                       export BROWSER_PICKER_TEST_OUTPUT="$TMPDIR/mixed-activation-argv"
                                       rm -f "$BROWSER_PICKER_TEST_OUTPUT"
@@ -1027,6 +1165,8 @@ EOF
                                     run_save_and_apply_keeps_pending
                                     run_invalid_configuration_recovery
                                     run_old_schema_migration_keeps_target_pending
+                                    run_automatic_failure_recovery_and_fifo
+                                    run_private_failure_preserves_intent
                                   '
 
                                 touch "$out"

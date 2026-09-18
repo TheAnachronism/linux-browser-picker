@@ -68,6 +68,12 @@ pub enum Outcome {
         destinations: Vec<BrowserDestination>,
         preselection: Option<Preselection>,
     },
+    RecoverLaunch {
+        target: OpenTarget,
+        error: launcher::Error,
+        destinations: Vec<BrowserDestination>,
+        preselection: Preselection,
+    },
     Setup {
         target: OpenTarget,
     },
@@ -123,6 +129,7 @@ pub fn preview(argument: &OsStr) -> Result<Outcome, Error> {
 #[derive(Clone, Copy)]
 enum AutomaticAction {
     Dispatch,
+    RecoverFailure,
     Preselect,
 }
 
@@ -133,6 +140,11 @@ fn route_with(argument: &OsStr, automatic: AutomaticAction) -> Result<Outcome, E
 
     let target = OpenTarget::parse(argument).map_err(Error::InvalidTarget)?;
     let interactive = std::env::var_os("DBUS_SESSION_BUS_ADDRESS").is_some();
+    let automatic = if interactive && matches!(automatic, AutomaticAction::Dispatch) {
+        AutomaticAction::RecoverFailure
+    } else {
+        automatic
+    };
     match configuration::inspect().map_err(Error::Configuration)? {
         Inspected::Missing => Ok(Outcome::Setup { target }),
         Inspected::Ready(configuration) => route_configured(configuration, target, automatic),
@@ -414,11 +426,8 @@ fn apply_rule(
         RoutingAction::Open { destination, mode } => (destination, *mode, true),
         RoutingAction::Preselect { destination, mode } => (destination, *mode, false),
     };
-    if opens_automatically && matches!(automatic, AutomaticAction::Dispatch) {
-        let destination = destination(&destinations, destination_id);
-        launcher::dispatch(destination, &target, mode == LaunchMode::Private)
-            .map_err(Error::Launch)?;
-        Ok(Outcome::Dispatched)
+    if opens_automatically {
+        apply_automatic(destination_id, mode, destinations, target, automatic)
     } else {
         Ok(Outcome::Pick {
             target,
@@ -441,31 +450,48 @@ fn apply_fallback(
         FallbackAction::Open {
             destination: destination_id,
             mode,
-        } => {
-            if matches!(automatic, AutomaticAction::Dispatch) {
-                launcher::dispatch(
-                    destination(&destinations, &destination_id),
-                    &target,
-                    mode == LaunchMode::Private,
-                )
-                .map_err(Error::Launch)?;
-                Ok(Outcome::Dispatched)
-            } else {
-                Ok(Outcome::Pick {
-                    target,
-                    destinations,
-                    preselection: Some(Preselection {
-                        destination_id,
-                        mode,
-                    }),
-                })
-            }
-        }
+        } => apply_automatic(&destination_id, mode, destinations, target, automatic),
         FallbackAction::ShowPicker => Ok(Outcome::Pick {
             target,
             destinations,
             preselection: None,
         }),
+    }
+}
+
+fn apply_automatic(
+    destination_id: &str,
+    mode: LaunchMode,
+    destinations: Vec<BrowserDestination>,
+    target: OpenTarget,
+    automatic: AutomaticAction,
+) -> Result<Outcome, Error> {
+    let preselection = || Preselection {
+        destination_id: destination_id.to_owned(),
+        mode,
+    };
+    if matches!(automatic, AutomaticAction::Preselect) {
+        return Ok(Outcome::Pick {
+            target,
+            destinations,
+            preselection: Some(preselection()),
+        });
+    }
+    match launcher::dispatch(
+        destination(&destinations, destination_id),
+        &target,
+        mode == LaunchMode::Private,
+    ) {
+        Ok(()) => Ok(Outcome::Dispatched),
+        Err(error) if matches!(automatic, AutomaticAction::RecoverFailure) => {
+            Ok(Outcome::RecoverLaunch {
+                target,
+                error,
+                destinations,
+                preselection: preselection(),
+            })
+        }
+        Err(error) => Err(Error::Launch(error)),
     }
 }
 

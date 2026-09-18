@@ -253,6 +253,17 @@ fn accept_target(session: &PickerSession, argument: &OsStr) -> Result<Presentati
             *session.destinations.borrow_mut() = destinations;
             Ok(Presentation::Picker)
         }
+        Ok(routing::Outcome::RecoverLaunch {
+            target,
+            error,
+            destinations,
+            preselection,
+        }) => {
+            queue_request(session, target, Some(preselection))?;
+            *session.destinations.borrow_mut() = destinations;
+            *session.recovery_error.borrow_mut() = Some(crate::launch_error_message(error));
+            Ok(Presentation::Recover)
+        }
         Ok(routing::Outcome::Setup { target }) => {
             queue_request(session, target, None)?;
             Ok(Presentation::Setup)
@@ -359,6 +370,21 @@ pub(crate) fn reapply_front(
                 target,
                 preselection,
             });
+            session.rebuild_picker(application);
+            Ok(())
+        }
+        Ok(routing::Outcome::RecoverLaunch {
+            target,
+            error,
+            destinations,
+            preselection,
+        }) => {
+            session.pending.borrow_mut().push_front(PendingRequest {
+                target,
+                preselection: Some(preselection),
+            });
+            *session.destinations.borrow_mut() = destinations;
+            *session.recovery_error.borrow_mut() = Some(crate::launch_error_message(error));
             session.rebuild_picker(application);
             Ok(())
         }
@@ -1223,7 +1249,6 @@ fn update_private_mode(
     let description = if supported {
         i18n::text("Open using the destination's private mode")
     } else {
-        private_mode.set_active(false);
         i18n::text("Selected destination does not support private mode")
     };
     private_mode.set_tooltip_text(Some(&description));
@@ -1247,12 +1272,12 @@ fn apply_preselection(
         .and_then(|index| list.row_at_index(index as i32))
         .or_else(|| list.row_at_index(0));
     list.select_row(selected.as_ref());
-    update_private_mode(list, private_mode, destinations);
     let private = request
         .preselection
         .as_ref()
         .is_some_and(|preselection| preselection.mode == LaunchMode::Private);
-    private_mode.set_active(private && private_mode.is_sensitive());
+    private_mode.set_active(private);
+    update_private_mode(list, private_mode, destinations);
     if request.preselection.is_some()
         && let Some(selected) = selected
     {

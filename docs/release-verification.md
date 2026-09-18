@@ -13,7 +13,7 @@ nix flake check
 | Surface | Check | Covers |
 | --- | --- | --- |
 | Packaged executable | `checks.package`, `checks.xdg-associations` | Installed binary, desktop entry, icon, metainfo, locale, HTTP/HTTPS/HTML/XHTML reporting |
-| Isolated XDG + private D-Bus | `checks.gui-smoke` | Target validation, routing precedence, automatic/Preselection/fallback, pending preservation across first-run and rule-edit saves, post-save routing, mixed URL/file input, concurrent activations, FIFO queue, overflow, cancellation, launch errors, migration, recovery |
+| Isolated XDG + private D-Bus | `checks.gui-smoke` | Target validation, routing precedence, automatic/Preselection/fallback, automatic launch-failure recovery with retained private intent, pending preservation across first-run and rule-edit saves, post-save routing, mixed URL/file input, concurrent activations, FIFO queue, overflow, cancellation, launch errors, migration, recovery |
 | Keyboard Picker and configuration | `checks.gui-smoke`, `checks.release-proof` | Focus, filter, Enter, Escape, Alt+number, Ctrl+Shift+P, destination and Routing Rule order, unsaved-change dialog, queue transitions |
 | AT-SPI tree | `checks.release-proof` | Names, roles, states, selection, availability, rule/action context, shortcuts; no icon- or position-only identification |
 | Privacy of logs and XDG state | `tests/environment_cli.rs`, `checks.release-proof` | No complete URLs, query values, credentials, file paths, searches, choices, or Pending Requests in diagnostics or persisted state |
