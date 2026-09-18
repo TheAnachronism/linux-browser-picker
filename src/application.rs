@@ -118,7 +118,7 @@ pub fn run() -> glib::ExitCode {
     application.connect_activate(glib::clone!(
         #[strong]
         session,
-        move |application| present_activation(application, &session)
+        move |application| present_configuration(application, &session)
     ));
     application.connect_command_line(glib::clone!(
         #[strong]
@@ -129,7 +129,7 @@ pub fn run() -> glib::ExitCode {
             if arguments.is_empty()
                 || (arguments.len() == 1 && crate::is_config_operation(arguments[0].to_str()))
             {
-                present_activation(application, &session);
+                present_configuration(application, &session);
                 return glib::ExitCode::SUCCESS;
             }
 
@@ -435,7 +435,7 @@ fn open_configuration_store() -> Result<configuration::ConfigurationStore, confi
 fn present_setup(application: &adw::Application, session: &PickerSession) {
     match open_configuration_store() {
         Ok(store) => setup::present(application, session.clone(), store),
-        Err(_) => show_configuration_window(application),
+        Err(_) => show_configuration_window(application, session),
     }
 }
 
@@ -587,17 +587,9 @@ fn show_request_error(application: &adw::Application, message: &str) {
     window.present();
 }
 
-fn present_activation(application: &adw::Application, session: &PickerSession) {
-    if let Some(window) = application.active_window() {
-        window.present();
-        return;
-    }
+fn present_configuration(application: &adw::Application, session: &PickerSession) {
     if session.migration_preview.borrow().is_some() {
         present_migration(application, session);
-        return;
-    }
-    if !session.pending.borrow().is_empty() {
-        show_picker(application, session.clone());
         return;
     }
     if let Ok(configuration::Inspected::Migratable { preview, .. }) = configuration::inspect() {
@@ -608,7 +600,16 @@ fn present_activation(application: &adw::Application, session: &PickerSession) {
     present_setup(application, session);
 }
 
-fn show_configuration_window(application: &adw::Application) {
+fn show_configuration_window(application: &adw::Application, session: &PickerSession) {
+    session.set_configuration_open(true);
+    if let Some(window) = application
+        .windows()
+        .into_iter()
+        .find(|window| window.widget_name() == "configuration-error")
+    {
+        window.present();
+        return;
+    }
     let page = adw::StatusPage::builder()
         .title(i18n::text("Browser Picker"))
         .description(i18n::text(
@@ -626,7 +627,21 @@ fn show_configuration_window(application: &adw::Application) {
         .default_height(480)
         .content(&toolbar)
         .build();
+    window.set_widget_name("configuration-error");
     apply_window_state(&window, "configuration");
+    let session = session.clone();
+    window.connect_close_request(glib::clone!(
+        #[weak]
+        application,
+        #[strong]
+        session,
+        #[upgrade_or]
+        glib::Propagation::Proceed,
+        move |_| {
+            session.resume_picker(&application);
+            glib::Propagation::Proceed
+        }
+    ));
     window.present();
 }
 

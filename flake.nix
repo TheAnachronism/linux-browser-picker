@@ -946,8 +946,7 @@ EOF
                                         sleep 0.1
                                       done
                                       test -n "$window"
-                                      xdotool windowfocus --sync "$window"
-                                      xdotool key --clearmodifiers alt+e
+                                      ${browser-picker}/bin/browser-picker
                                       for attempt in $(seq 1 100); do
                                         set -- $(xdotool search --onlyvisible --name "^Browser Picker$" 2>/dev/null || true)
                                         if [ "$#" -ge 2 ]; then
@@ -957,6 +956,47 @@ EOF
                                       done
                                       set -- $(xdotool search --onlyvisible --name "^Browser Picker$" 2>/dev/null || true)
                                       test "$#" -ge 2
+                                      python3 "$inspect" wait "Configuration"
+                                      config_window=
+                                      for candidate in "$@"; do
+                                        if [ "$candidate" != "$window" ]; then
+                                          config_window=$candidate
+                                          break
+                                        fi
+                                      done
+                                      test -n "$config_window"
+                                      xdotool windowfocus --sync "$config_window"
+                                      xdotool key --clearmodifiers ctrl+w
+                                      for attempt in $(seq 1 100); do
+                                        set -- $(xdotool search --onlyvisible --name "^Browser Picker$" 2>/dev/null || true)
+                                        if [ "$#" -eq 1 ]; then
+                                          break
+                                        fi
+                                        sleep 0.1
+                                      done
+                                      set -- $(xdotool search --onlyvisible --name "^Browser Picker$" 2>/dev/null || true)
+                                      test "$#" -eq 1
+                                      ${browser-picker}/bin/browser-picker config
+                                      for attempt in $(seq 1 100); do
+                                        set -- $(xdotool search --onlyvisible --name "^Browser Picker$" 2>/dev/null || true)
+                                        if [ "$#" -ge 2 ]; then
+                                          break
+                                        fi
+                                        sleep 0.1
+                                      done
+                                      set -- $(xdotool search --onlyvisible --name "^Browser Picker$" 2>/dev/null || true)
+                                      test "$#" -ge 2
+                                      config_window=
+                                      for candidate in "$@"; do
+                                        if [ "$candidate" != "$window" ]; then
+                                          config_window=$candidate
+                                          break
+                                        fi
+                                      done
+                                      test -n "$config_window"
+                                      xdotool windowfocus --sync "$window" || true
+                                      ${browser-picker}/bin/browser-picker config
+                                      test "$(xdotool getwindowfocus)" = "$config_window"
                                       test ! -f "$BROWSER_PICKER_TEST_OUTPUT"
                                       ${browser-picker}/bin/browser-picker "https://automatic.example/live"
                                       for attempt in $(seq 1 100); do
