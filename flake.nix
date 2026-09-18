@@ -216,8 +216,19 @@ EOF
                   dbus
                   glib
                   gtk3
+                  gtk4
+                  atk
+                  at-spi2-core
+                  gobject-introspection
+                  (python3.withPackages (ps: [ ps.pygobject3 ]))
                   xdotool
                   xvfb-run
+                ];
+                GI_TYPELIB_PATH = lib.makeSearchPath "lib/girepository-1.0" [
+                  pkgs.at-spi2-core
+                  pkgs.gobject-introspection
+                  pkgs.gtk4
+                  pkgs.atk
                 ];
               }
               ''
@@ -330,6 +341,11 @@ EOF
                                     export GDK_BACKEND=x11
                                     export GSK_RENDERER=cairo
                                     export GSETTINGS_BACKEND=memory
+                                    export NO_AT_BRIDGE=0
+                                    ${pkgs.at-spi2-core}/libexec/at-spi-bus-launcher --launch-immediately &
+                                    ${pkgs.at-spi2-core}/libexec/at-spi2-registryd &
+                                    sleep 0.4
+                                    inspect=${./nix/a11y_inspect.py}
 
                                     run_and_assert_window() {
                                       launcher=
@@ -486,6 +502,8 @@ EOF
                                       xdotool windowfocus --sync "$window"
                                       xdotool key --clearmodifiers space
                                       sleep 0.2
+                                      python3 "$inspect" focus "Show Picker"
+                                      xdotool key --clearmodifiers space Down Return
                                       xdotool key --clearmodifiers alt+s
                                       for attempt in $(seq 1 100); do
                                         test ! -f "$XDG_CONFIG_HOME/browser-picker/config.toml" || break
@@ -493,6 +511,7 @@ EOF
                                       done
                                       grep -q "type = \"discovered\"" "$XDG_CONFIG_HOME/browser-picker/config.toml"
                                       grep -q "aaa-controlled.desktop" "$XDG_CONFIG_HOME/browser-picker/config.toml"
+                                      grep -A2 "^\[fallback\]$" "$XDG_CONFIG_HOME/browser-picker/config.toml" | grep -q "action = \"open\""
                                       test ! -f "$TMPDIR/first-run-argv"
                                       window=
                                       for attempt in $(seq 1 100); do
@@ -832,6 +851,71 @@ EOF
                                       unset BROWSER_PICKER_TEST_OUTPUT
                                     }
 
+                                    run_save_and_apply_keeps_pending() {
+                                      export BROWSER_PICKER_TEST_OUTPUT="$TMPDIR/save-and-apply-argv"
+                                      rm -f "$BROWSER_PICKER_TEST_OUTPUT"
+                                      pending="https://pending.example/queue"
+                                      ${browser-picker}/bin/browser-picker "$pending" &
+                                      launcher=$!
+                                      window=
+                                      for attempt in $(seq 1 100); do
+                                        set -- $(xdotool search --onlyvisible --name "^Browser Picker$" 2>/dev/null || true)
+                                        if [ "$#" -gt 0 ]; then
+                                          window=$1
+                                          break
+                                        fi
+                                        sleep 0.1
+                                      done
+                                      test -n "$window"
+                                      xdotool windowfocus --sync "$window"
+                                      xdotool key --clearmodifiers alt+e
+                                      for attempt in $(seq 1 100); do
+                                        set -- $(xdotool search --onlyvisible --name "^Browser Picker$" 2>/dev/null || true)
+                                        if [ "$#" -ge 2 ]; then
+                                          break
+                                        fi
+                                        sleep 0.1
+                                      done
+                                      set -- $(xdotool search --onlyvisible --name "^Browser Picker$" 2>/dev/null || true)
+                                      test "$#" -ge 2
+                                      python3 "$inspect" focus "Show Picker"
+                                      xdotool key --clearmodifiers space Down Down Return
+                                      xdotool key --clearmodifiers alt+s
+                                      for attempt in $(seq 1 100); do
+                                        grep -A3 "^\[fallback\]$" "$XDG_CONFIG_HOME/browser-picker/config.toml" | grep -q "destination = \"controlled\"" && break
+                                        sleep 0.1
+                                      done
+                                      grep -A3 "^\[fallback\]$" "$XDG_CONFIG_HOME/browser-picker/config.toml" | grep -q "destination = \"controlled\""
+                                      test ! -f "$BROWSER_PICKER_TEST_OUTPUT"
+                                      window=
+                                      for attempt in $(seq 1 100); do
+                                        set -- $(xdotool search --onlyvisible --name "^Browser Picker$" 2>/dev/null || true)
+                                        if [ "$#" -eq 1 ]; then
+                                          window=$1
+                                          break
+                                        fi
+                                        sleep 0.1
+                                      done
+                                      test -n "$window"
+                                      xdotool windowfocus --sync "$window"
+                                      xdotool key Return
+                                      for attempt in $(seq 1 100); do
+                                        test -f "$BROWSER_PICKER_TEST_OUTPUT" && break
+                                        sleep 0.1
+                                      done
+                                      test "$(cat "$BROWSER_PICKER_TEST_OUTPUT")" = "--normal
+                $pending"
+                                      wait "$launcher"
+
+                                      next="https://new-arrival.example/after-save"
+                                      ${browser-picker}/bin/browser-picker "$next"
+                                      test "$(cat "$BROWSER_PICKER_TEST_OUTPUT")" = "--normal
+                $pending
+                --normal
+                $next"
+                                      unset BROWSER_PICKER_TEST_OUTPUT
+                                    }
+
                                     run_invalid_configuration_recovery() {
                                       export XDG_CONFIG_HOME="$TMPDIR/invalid-config"
                                       mkdir -p "$XDG_CONFIG_HOME/browser-picker"
@@ -940,6 +1024,7 @@ EOF
                                     run_queue_limit_and_escape
                                     run_activation_limit
                                     run_paused_configuration_and_live_routing
+                                    run_save_and_apply_keeps_pending
                                     run_invalid_configuration_recovery
                                     run_old_schema_migration_keeps_target_pending
                                   '

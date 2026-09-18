@@ -57,7 +57,7 @@ The normal or browser-native private/incognito context used to open an Open Targ
 _Avoid_: Private destination, incognito browser
 
 **Pending Request**:
-One accepted Open Target awaiting a user choice. Pending Requests remain distinct and are presented sequentially in one Picker, while web URLs resolved automatically launch immediately.
+One accepted Open Target awaiting a user choice. Pending Requests remain distinct and are presented sequentially in one Picker. A configuration save may re-evaluate a Pending Request's Preselection but cannot dispatch it; newly accepted web URLs may still resolve automatically.
 _Avoid_: URL batch, tab group
 
 **Picker**:

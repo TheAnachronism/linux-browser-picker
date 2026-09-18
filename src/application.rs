@@ -341,10 +341,13 @@ pub(crate) fn reapply_front(
     let Some(request) = session.pending.borrow_mut().pop_front() else {
         return Ok(());
     };
-    match routing::route(OsStr::new(request.target.as_str())) {
+    match routing::preview(OsStr::new(request.target.as_str())) {
         Ok(routing::Outcome::Dispatched) => {
-            session.rebuild_picker(application);
-            Ok(())
+            session.pending.borrow_mut().push_front(request);
+            Err((
+                i18n::text("Saved configuration could not be reloaded"),
+                crate::STATUS_CONFIGURATION,
+            ))
         }
         Ok(routing::Outcome::Pick {
             target,

@@ -113,6 +113,20 @@ pub struct RoutingEvaluation {
 }
 
 pub fn route(argument: &OsStr) -> Result<Outcome, Error> {
+    route_with(argument, AutomaticAction::Dispatch)
+}
+
+pub fn preview(argument: &OsStr) -> Result<Outcome, Error> {
+    route_with(argument, AutomaticAction::Preselect)
+}
+
+#[derive(Clone, Copy)]
+enum AutomaticAction {
+    Dispatch,
+    Preselect,
+}
+
+fn route_with(argument: &OsStr, automatic: AutomaticAction) -> Result<Outcome, Error> {
     if std::env::var_os("DISPLAY").is_none() && std::env::var_os("WAYLAND_DISPLAY").is_none() {
         return Err(Error::NoGraphicalSession);
     }
@@ -121,7 +135,7 @@ pub fn route(argument: &OsStr) -> Result<Outcome, Error> {
     let interactive = std::env::var_os("DBUS_SESSION_BUS_ADDRESS").is_some();
     match configuration::inspect().map_err(Error::Configuration)? {
         Inspected::Missing => Ok(Outcome::Setup { target }),
-        Inspected::Ready(configuration) => route_configured(configuration, target),
+        Inspected::Ready(configuration) => route_configured(configuration, target, automatic),
         Inspected::Invalid(error) if interactive => Ok(Outcome::Recover {
             target,
             error,
@@ -267,7 +281,11 @@ fn diagnose_configured(configuration: Configuration, target: OpenTarget) -> Diag
     }
 }
 
-fn route_configured(configuration: Configuration, target: OpenTarget) -> Result<Outcome, Error> {
+fn route_configured(
+    configuration: Configuration,
+    target: OpenTarget,
+    automatic: AutomaticAction,
+) -> Result<Outcome, Error> {
     if matches!(target, OpenTarget::File(_)) {
         return Ok(Outcome::Pick {
             target,
@@ -278,9 +296,14 @@ fn route_configured(configuration: Configuration, target: OpenTarget) -> Result<
     if let OpenTarget::Web(web) = &target
         && let Some(rule) = first_matching_rule(&configuration.rules, web)
     {
-        return apply_rule(rule, configuration.destinations, target);
+        return apply_rule(rule, configuration.destinations, target, automatic);
     }
-    apply_fallback(configuration.fallback, configuration.destinations, target)
+    apply_fallback(
+        configuration.fallback,
+        configuration.destinations,
+        target,
+        automatic,
+    )
 }
 
 pub fn discovered_destinations() -> Vec<BrowserDestination> {
@@ -385,12 +408,13 @@ fn apply_rule(
     rule: &RoutingRule,
     destinations: Vec<BrowserDestination>,
     target: OpenTarget,
+    automatic: AutomaticAction,
 ) -> Result<Outcome, Error> {
-    let (destination_id, mode, automatic) = match &rule.action {
+    let (destination_id, mode, opens_automatically) = match &rule.action {
         RoutingAction::Open { destination, mode } => (destination, *mode, true),
         RoutingAction::Preselect { destination, mode } => (destination, *mode, false),
     };
-    if automatic {
+    if opens_automatically && matches!(automatic, AutomaticAction::Dispatch) {
         let destination = destination(&destinations, destination_id);
         launcher::dispatch(destination, &target, mode == LaunchMode::Private)
             .map_err(Error::Launch)?;
@@ -411,19 +435,31 @@ fn apply_fallback(
     fallback: FallbackAction,
     destinations: Vec<BrowserDestination>,
     target: OpenTarget,
+    automatic: AutomaticAction,
 ) -> Result<Outcome, Error> {
     match fallback {
         FallbackAction::Open {
             destination: destination_id,
             mode,
         } => {
-            launcher::dispatch(
-                destination(&destinations, &destination_id),
-                &target,
-                mode == LaunchMode::Private,
-            )
-            .map_err(Error::Launch)?;
-            Ok(Outcome::Dispatched)
+            if matches!(automatic, AutomaticAction::Dispatch) {
+                launcher::dispatch(
+                    destination(&destinations, &destination_id),
+                    &target,
+                    mode == LaunchMode::Private,
+                )
+                .map_err(Error::Launch)?;
+                Ok(Outcome::Dispatched)
+            } else {
+                Ok(Outcome::Pick {
+                    target,
+                    destinations,
+                    preselection: Some(Preselection {
+                        destination_id,
+                        mode,
+                    }),
+                })
+            }
         }
         FallbackAction::ShowPicker => Ok(Outcome::Pick {
             target,
