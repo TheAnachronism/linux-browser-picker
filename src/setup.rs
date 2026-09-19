@@ -43,6 +43,7 @@ struct EditorItem {
     id: gtk::Entry,
     label: gtk::Entry,
     icon: gtk::Entry,
+    drag_handle: gtk::Widget,
     row: gtk::ListBoxRow,
 }
 
@@ -421,7 +422,7 @@ pub fn present(application: &adw::Application, session: PickerSession, store: Co
         }
     ));
     for item in items.borrow().iter() {
-        reorder_ui::attach_row_drag(&item.row, Rc::clone(&on_drop));
+        reorder_ui::attach_row_drag(&item.row, &item.drag_handle, Rc::clone(&on_drop));
     }
     refresh_fallback();
     fallback.connect_selected_notify(glib::clone!(
@@ -589,7 +590,7 @@ pub fn present(application: &adw::Application, session: PickerSession, store: Co
                 &preferred_fallback,
                 refresh_fallback.clone(),
             );
-            reorder_ui::attach_row_drag(&item.row, Rc::clone(&on_drop));
+            reorder_ui::attach_row_drag(&item.row, &item.drag_handle, Rc::clone(&on_drop));
             list.append(&item.row);
             list.select_row(Some(&item.row));
             item.id.grab_focus();
@@ -1104,7 +1105,7 @@ fn refresh_profiles(
         append_profile_candidates(candidate, &mut items, &mut used_ids, &configured_profiles);
     }
     for item in items.iter().skip(start) {
-        reorder_ui::attach_row_drag(&item.row, Rc::clone(on_drop));
+        reorder_ui::attach_row_drag(&item.row, &item.drag_handle, Rc::clone(on_drop));
         list.append(&item.row);
     }
 }
@@ -1382,7 +1383,7 @@ fn build_item(
     icon_image.set_pixel_size(32);
 
     let header = gtk::Box::new(gtk::Orientation::Horizontal, 9);
-    reorder_ui::prepend_handle(&header, &format!("Reorder {name}"));
+    let drag_handle = reorder_ui::prepend_handle(&header, &format!("Reorder {name}"));
     header.append(&icon_image);
     header.append(&enable);
 
@@ -1427,6 +1428,7 @@ fn build_item(
         id: id_entry,
         label: label_entry,
         icon: icon_entry,
+        drag_handle,
         row,
     }
 }

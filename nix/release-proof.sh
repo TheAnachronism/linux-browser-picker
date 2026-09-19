@@ -263,7 +263,7 @@ inspect assert \
   "state:selected" \
   "<Alt>2" \
   "<Control><Shift>p"
-inspect node "Work Browser" --role "list item" --enabled --selected --shortcut "<Alt>2"
+inspect node "Work Browser" --role "list item" --enabled --selected --focused --shortcut "<Alt>2"
 inspect node "Alpha Browser" --role "list item" --enabled --shortcut "<Alt>1"
 inspect node "Unavailable Browser" --role "list item" --disabled --shortcut "<Alt>3"
 inspect node "Repair" --role "button" --enabled
@@ -294,6 +294,10 @@ inspect assert \
   "Desktop defaults" \
   "<Alt><Shift>Down" \
   "<Alt>Up"
+inspect node "Move destination up" --role "button" --enabled --shortcut "<Alt><Shift>Up"
+inspect node "Move destination down" --role "button" --enabled --shortcut "<Alt><Shift>Down"
+inspect node "Move Routing Rule up" --role "button" --enabled --shortcut "<Alt>Up"
+inspect node "Move Routing Rule down" --role "button" --enabled --shortcut "<Alt>Down"
 xdotool windowfocus --sync "$window"
 xdotool key --clearmodifiers alt+shift+Down
 xdotool key --clearmodifiers alt+Down
@@ -303,13 +307,10 @@ for attempt in $(seq 1 50); do
   sleep 0.1
 done
 assert_order controlled,alpha later,suggested keyboard
-inspect assert \
-  "Move destination up" \
-  "Move destination down" \
-  "Move Routing Rule up" \
-  "Move Routing Rule down" \
-  "<Alt><Shift>Down" \
-  "<Alt>Up"
+inspect node "Move destination up" --role "button" --enabled --shortcut "<Alt><Shift>Up"
+inspect node "Move destination down" --role "button" --enabled --shortcut "<Alt><Shift>Down"
+inspect node "Move Routing Rule up" --role "button" --enabled --shortcut "<Alt>Up"
+inspect node "Move Routing Rule down" --role "button" --enabled --shortcut "<Alt>Down"
 
 xdotool windowfocus --sync "$window"
 inspect focus "Browser Destination display label"

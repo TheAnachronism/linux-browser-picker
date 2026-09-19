@@ -109,6 +109,7 @@ struct RuleWidgets {
     destination: gtk::Entry,
     mode: gtk::DropDown,
     groups: Rc<RefCell<Vec<GroupWidgets>>>,
+    drag_handle: gtk::Widget,
     row: gtk::ListBoxRow,
 }
 
@@ -203,7 +204,7 @@ impl RoutingRuleEditor {
             }
         ));
         for rule in rules.borrow().iter() {
-            reorder_ui::attach_row_drag(&rule.row, Rc::clone(&on_drop));
+            reorder_ui::attach_row_drag(&rule.row, &rule.drag_handle, Rc::clone(&on_drop));
         }
         if let Some(first) = rules.borrow().first() {
             list.select_row(Some(&first.row));
@@ -275,7 +276,11 @@ impl RoutingRuleEditor {
                     },
                 };
                 let widgets = build_rule(rule, &on_change);
-                reorder_ui::attach_row_drag(&widgets.row, Rc::clone(&on_drop));
+                reorder_ui::attach_row_drag(
+                    &widgets.row,
+                    &widgets.drag_handle,
+                    Rc::clone(&on_drop),
+                );
                 list.append(&widgets.row);
                 list.select_row(Some(&widgets.row));
                 widgets.id.grab_focus();
@@ -482,7 +487,7 @@ fn build_rule(rule: RoutingRule, on_change: &ChangeCallback) -> RuleWidgets {
     });
 
     let header = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    reorder_ui::prepend_handle(&header, &format!("Reorder {}", rule.name));
+    let drag_handle = reorder_ui::prepend_handle(&header, &format!("Reorder {}", rule.name));
     header.append(&enabled);
     header.append(&id);
     header.append(&name);
@@ -547,6 +552,7 @@ fn build_rule(rule: RoutingRule, on_change: &ChangeCallback) -> RuleWidgets {
         destination,
         mode,
         groups,
+        drag_handle,
         row,
     }
 }
