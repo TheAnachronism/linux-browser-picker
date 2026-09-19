@@ -117,7 +117,8 @@ fn dispatch_profile(
     })?;
     let executable = application.executable();
     let paths = profiles::DiscoveryPaths::from_env();
-    match profiles::capability(desktop_id, Some(&executable), &identity, &paths) {
+    let decision = profiles::decide(desktop_id, Some(&executable), &identity, &paths);
+    match decision.capability {
         profiles::ProfileCapability::Verified => {}
         profiles::ProfileCapability::MissingApplication
         | profiles::ProfileCapability::MissingProfile => {
@@ -137,16 +138,20 @@ fn dispatch_profile(
             });
         }
     }
-    let assumptions = profiles::classify(desktop_id, &executable, &paths)
-        .expect("verified profile capability should classify");
+    let assumptions = decision
+        .assumptions
+        .expect("verified profile capability should include family assumptions");
     if assumptions.family != family {
         return Err(Error {
             destination_id: destination.id.clone(),
             reason: FailureReason::Other,
         });
     }
+    let executable = decision
+        .executable
+        .expect("verified profile capability should include an executable");
     let arguments = profiles::launch_arguments(
-        &identity,
+        &decision.identity,
         private,
         assumptions.private_flag,
         target.as_str(),

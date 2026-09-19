@@ -17,7 +17,7 @@ use crate::configuration::{
 use crate::discovery::{self, BrowserCandidate};
 use crate::i18n;
 use crate::open_target::OpenTarget;
-use crate::profiles::{self, ProfileIdentity};
+use crate::profiles::{self, ProfileCapability, ProfileIdentity};
 use crate::routing;
 use crate::routing_editor::{self, RoutingRuleEditor};
 
@@ -497,10 +497,9 @@ pub fn present(application: &adw::Application, session: PickerSession, store: Co
         #[strong]
         items,
         #[strong]
-        ordinary,
-        #[strong]
         refresh_fallback,
         move |_| {
+            let ordinary = discovery::discover().ordinary;
             refresh_profiles(&list, &items, &ordinary);
             refresh_fallback();
         }
@@ -1639,41 +1638,44 @@ fn launch_from_identity(desktop_id: &str, identity: ProfileIdentity) -> Destinat
 fn assumptions_for(desktop_id: &str, identity: &ProfileIdentity) -> (Option<String>, bool) {
     let executable = discovery::app_info(desktop_id)
         .map(|application| gtk::gio::prelude::AppInfoExt::executable(&application));
-    let Some(executable) = executable else {
-        return (
-            Some(i18n::text(
-                "Browser Application is not installed. This profile cannot be enabled as a verified destination.",
-            )),
-            false,
-        );
-    };
-    let Some(assumptions) = profiles::classify(
+    let decision = profiles::decide(
         desktop_id,
-        &executable,
+        executable.as_deref(),
+        identity,
         &profiles::DiscoveryPaths::from_env(),
-    ) else {
-        return (
-            Some(i18n::text(
+    );
+    let enable_allowed = decision.capability == ProfileCapability::Verified;
+    let Some(assumptions) = decision.assumptions else {
+        let message = match decision.capability {
+            ProfileCapability::MissingApplication => i18n::text(
+                "Browser Application is not installed. This profile cannot be enabled as a verified destination.",
+            ),
+            _ => i18n::text(
                 "Unknown packaging or unsupported capability. This remains a generic Browser Application rather than a verified profile destination.",
-            )),
-            false,
-        );
+            ),
+        };
+        return (Some(message), false);
     };
-    let locator = match identity {
+    let locator = match &decision.identity {
         ProfileIdentity::Firefox { name, path } => format!("{} ({name})", path.display()),
         ProfileIdentity::Chromium {
             user_data_dir,
             profile_directory,
         } => format!("{} / {profile_directory}", user_data_dir.display()),
     };
+    let executable = decision
+        .executable
+        .as_ref()
+        .map(|path| path.display().to_string())
+        .unwrap_or_default();
     let text = i18n::text_with(
         "{product} family\nExecutable: {executable}\nProfile: {profile}\nPrivate flag: {flag}\nLaunch reuses the existing browser process for this profile. Browser Picker will not create, rename, delete, clone, or repair it.",
         &[
             ("{product}", &assumptions.product),
-            ("{executable}", &executable.display().to_string()),
+            ("{executable}", &executable),
             ("{profile}", &locator),
             ("{flag}", assumptions.private_flag),
         ],
     );
-    (Some(text), profiles::is_present(identity))
+    (Some(text), enable_allowed)
 }

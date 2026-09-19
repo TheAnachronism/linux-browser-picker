@@ -112,7 +112,13 @@ const FAMILY_CANDIDATES: &[FamilyCandidate] = &[
         profile_root: |paths| paths.home.join(".librewolf"),
     },
     FamilyCandidate {
-        ids: &["zen", "zen-browser", "app.zen_browser.zen"],
+        ids: &[
+            "zen",
+            "zen-browser",
+            "zen-beta-2",
+            "zen-beta-3",
+            "app.zen_browser.zen",
+        ],
         family: BrowserFamily::Firefox,
         product: "Zen",
         private_flag: "--private-window",
@@ -259,25 +265,73 @@ pub enum ProfileCapability {
     UnsupportedPackaging,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CapabilityDecision {
+    pub capability: ProfileCapability,
+    pub assumptions: Option<FamilyAssumptions>,
+    pub executable: Option<PathBuf>,
+    pub identity: ProfileIdentity,
+}
+
+pub fn decide(
+    desktop_id: &str,
+    executable: Option<&Path>,
+    identity: &ProfileIdentity,
+    paths: &DiscoveryPaths,
+) -> CapabilityDecision {
+    let identity = identity.clone();
+    let Some(executable) = executable.map(Path::to_path_buf) else {
+        return CapabilityDecision {
+            capability: ProfileCapability::MissingApplication,
+            assumptions: None,
+            executable: None,
+            identity,
+        };
+    };
+    let Some(assumptions) = classify(desktop_id, &executable, paths) else {
+        return CapabilityDecision {
+            capability: ProfileCapability::UnsupportedPackaging,
+            assumptions: None,
+            executable: Some(executable),
+            identity,
+        };
+    };
+    if executable.is_absolute() && !executable.is_file() {
+        return CapabilityDecision {
+            capability: ProfileCapability::MissingApplication,
+            assumptions: Some(assumptions),
+            executable: Some(executable),
+            identity,
+        };
+    }
+    if assumptions.family != identity.family() {
+        return CapabilityDecision {
+            capability: ProfileCapability::UnsupportedPackaging,
+            assumptions: Some(assumptions),
+            executable: Some(executable),
+            identity,
+        };
+    }
+    let capability = if is_present(&identity) {
+        ProfileCapability::Verified
+    } else {
+        ProfileCapability::MissingProfile
+    };
+    CapabilityDecision {
+        capability,
+        assumptions: Some(assumptions),
+        executable: Some(executable),
+        identity,
+    }
+}
+
 pub fn capability(
     desktop_id: &str,
     executable: Option<&Path>,
     identity: &ProfileIdentity,
     paths: &DiscoveryPaths,
 ) -> ProfileCapability {
-    let Some(executable) = executable else {
-        return ProfileCapability::MissingApplication;
-    };
-    let Some(assumptions) = classify(desktop_id, executable, paths) else {
-        return ProfileCapability::UnsupportedPackaging;
-    };
-    if assumptions.family != identity.family() {
-        return ProfileCapability::UnsupportedPackaging;
-    }
-    if !is_present(identity) {
-        return ProfileCapability::MissingProfile;
-    }
-    ProfileCapability::Verified
+    decide(desktop_id, executable, identity, paths).capability
 }
 
 fn discover_firefox(profile_root: &Path) -> Vec<DiscoveredProfile> {
@@ -725,6 +779,132 @@ mod tests {
         assert_eq!(
             capability("firefox.desktop", None, &identity, &paths),
             ProfileCapability::MissingApplication
+        );
+    }
+
+    #[test]
+    fn current_zen_desktop_ids_use_firefox_family_without_unknown_derivatives() {
+        let paths = DiscoveryPaths {
+            home: PathBuf::from("/home/user"),
+            config_home: PathBuf::from("/home/user/.config"),
+        };
+        for desktop_id in ["zen-beta-2.desktop", "zen-beta-3.desktop"] {
+            let assumptions = classify(desktop_id, Path::new("/usr/bin/zen"), &paths)
+                .unwrap_or_else(|| panic!("{desktop_id} should use the Firefox-family adapter"));
+            assert_eq!(assumptions.family, BrowserFamily::Firefox, "{desktop_id}");
+            assert_eq!(assumptions.product, "Zen", "{desktop_id}");
+            assert_eq!(
+                assumptions.profile_root,
+                Path::new("/home/user/.zen"),
+                "{desktop_id}"
+            );
+            assert_eq!(assumptions.private_flag, "--private-window", "{desktop_id}");
+        }
+        assert_eq!(
+            classify(
+                "zen-twilight.desktop",
+                Path::new("/usr/bin/zen-twilight"),
+                &paths
+            ),
+            None,
+            "unknown Zen derivatives must stay generic destinations"
+        );
+    }
+
+    #[test]
+    fn stale_executable_is_a_missing_application_not_a_verified_profile() {
+        let home = tempfile::TempDir::new().expect("temporary home should be created");
+        let profile = home.path().join("work");
+        std::fs::create_dir(&profile).expect("profile should exist");
+        let paths = DiscoveryPaths {
+            home: home.path().to_path_buf(),
+            config_home: home.path().join(".config"),
+        };
+        let identity = ProfileIdentity::Firefox {
+            name: "Work".to_owned(),
+            path: profile,
+        };
+        let missing = home.path().join("gone-firefox");
+        assert_eq!(
+            capability(
+                "firefox.desktop",
+                Some(missing.as_path()),
+                &identity,
+                &paths,
+            ),
+            ProfileCapability::MissingApplication
+        );
+    }
+
+    #[test]
+    fn setup_and_dispatch_share_family_packaging_executable_locator_and_private_capability() {
+        let home = tempfile::TempDir::new().expect("temporary home should be created");
+        let profile = home.path().join("work");
+        std::fs::create_dir(&profile).expect("profile should exist");
+        let executable = home.path().join("firefox");
+        std::fs::write(&executable, b"#!/bin/sh\n").expect("executable should be writable");
+        let paths = DiscoveryPaths {
+            home: home.path().to_path_buf(),
+            config_home: home.path().join(".config"),
+        };
+        let identity = ProfileIdentity::Firefox {
+            name: "Work".to_owned(),
+            path: profile.clone(),
+        };
+
+        let verified = decide(
+            "firefox.desktop",
+            Some(executable.as_path()),
+            &identity,
+            &paths,
+        );
+        assert_eq!(verified.capability, ProfileCapability::Verified);
+        let assumptions = verified
+            .assumptions
+            .expect("verified profiles expose family assumptions");
+        assert_eq!(assumptions.family, BrowserFamily::Firefox);
+        assert_eq!(assumptions.private_flag, "--private-window");
+        assert_eq!(verified.executable.as_deref(), Some(executable.as_path()));
+        assert_eq!(verified.identity, identity);
+
+        let stale = decide(
+            "firefox.desktop",
+            Some(home.path().join("gone").as_path()),
+            &identity,
+            &paths,
+        );
+        assert_eq!(stale.capability, ProfileCapability::MissingApplication);
+        assert_eq!(
+            stale.assumptions.as_ref().map(|item| item.family),
+            Some(BrowserFamily::Firefox)
+        );
+
+        let sandboxed = decide(
+            "firefox.desktop",
+            Some(Path::new("/snap/bin/firefox")),
+            &identity,
+            &paths,
+        );
+        assert_eq!(
+            sandboxed.capability,
+            ProfileCapability::UnsupportedPackaging
+        );
+        assert!(sandboxed.assumptions.is_none());
+
+        let zen = decide(
+            "zen-beta-2.desktop",
+            Some(executable.as_path()),
+            &identity,
+            &paths,
+        );
+        assert_eq!(zen.capability, ProfileCapability::Verified);
+        assert_eq!(
+            zen.assumptions.as_ref().map(|item| item.product.as_str()),
+            Some("Zen")
+        );
+        assert_eq!(
+            zen.assumptions.as_ref().map(|item| item.private_flag),
+            Some("--private-window")
         );
     }
 }

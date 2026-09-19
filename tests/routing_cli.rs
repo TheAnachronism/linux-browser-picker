@@ -1448,6 +1448,113 @@ fn chromium_profile_destination_launches_with_user_data_root_and_profile_id() {
 }
 
 #[test]
+fn zen_profile_destination_launches_with_firefox_family_argv() {
+    let config_home = TempDir::new().expect("temporary configuration home should be created");
+    let executable = install_fake_browser(&config_home);
+    let data_home = install_family_desktop(&config_home, "zen-beta-2.desktop", "Zen", &executable);
+    let profile = config_home.path().join("zen-work");
+    fs::create_dir(&profile).expect("Zen profile should exist");
+    write_raw_config(
+        &config_home,
+        &format!(
+            "version = 1\n\n[[destinations]]\nid = \"zen-work\"\nlabel = \"Work Zen\"\nprofile_label = \"Work\"\n\n[destinations.application]\ntype = \"firefox-profile\"\ndesktop_id = \"zen-beta-2.desktop\"\nname = \"Work\"\npath = \"{}\"\n\n[fallback]\naction = \"open\"\ndestination = \"zen-work\"\n",
+            profile.display()
+        ),
+    );
+    let received = config_home.path().join("received-argv");
+    let target = "https://work.example/zen";
+
+    let output = browser_picker(&config_home)
+        .env("XDG_DATA_HOME", &data_home)
+        .env("XDG_DATA_DIRS", &data_home)
+        .env("BROWSER_PICKER_TEST_OUTPUT", &received)
+        .arg(target)
+        .output()
+        .expect("Browser Picker should start");
+
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        wait_for_file(&received),
+        format!("--profile\n{}\n{target}\n", profile.display())
+    );
+}
+
+#[test]
+fn stale_profile_executable_fails_without_dispatch() {
+    let config_home = TempDir::new().expect("temporary configuration home should be created");
+    let missing = config_home.path().join("gone-firefox");
+    let data_home = install_family_desktop(&config_home, "firefox.desktop", "Firefox", &missing);
+    let profile = config_home.path().join("work-profile");
+    fs::create_dir(&profile).expect("Firefox profile should exist");
+    write_raw_config(
+        &config_home,
+        &format!(
+            "version = 1\n\n[[destinations]]\nid = \"firefox-work\"\nlabel = \"Work Firefox\"\nprofile_label = \"Work\"\n\n[destinations.application]\ntype = \"firefox-profile\"\ndesktop_id = \"firefox.desktop\"\nname = \"Work\"\npath = \"{}\"\n\n[fallback]\naction = \"open\"\ndestination = \"firefox-work\"\n",
+            profile.display()
+        ),
+    );
+    let received = config_home.path().join("received-argv");
+
+    let output = browser_picker(&config_home)
+        .env("XDG_DATA_HOME", &data_home)
+        .env("XDG_DATA_DIRS", &data_home)
+        .env("BROWSER_PICKER_TEST_OUTPUT", &received)
+        .arg("https://work.example/mail")
+        .output()
+        .expect("Browser Picker should start");
+
+    assert_eq!(output.status.code(), Some(4));
+    assert!(
+        received.exists().not(),
+        "a stale executable must not dispatch"
+    );
+    let stderr = String::from_utf8(output.stderr).expect("error output should be UTF-8");
+    assert_eq!(
+        stderr,
+        "Browser Destination 'firefox-work' could not accept dispatch: executable was not found\n"
+    );
+}
+
+#[test]
+fn stale_profile_executable_is_unavailable_in_diagnostics() {
+    let config_home = TempDir::new().expect("temporary configuration home should be created");
+    let missing = config_home.path().join("gone-firefox");
+    let data_home = install_family_desktop(&config_home, "firefox.desktop", "Firefox", &missing);
+    let profile = config_home.path().join("work-profile");
+    fs::create_dir(&profile).expect("Firefox profile should exist");
+    write_raw_config(
+        &config_home,
+        &format!(
+            "version = 1\n\n[[destinations]]\nid = \"firefox-work\"\nlabel = \"Work Firefox\"\nprofile_label = \"Work\"\n\n[destinations.application]\ntype = \"firefox-profile\"\ndesktop_id = \"firefox.desktop\"\nname = \"Work\"\npath = \"{}\"\n\n[fallback]\naction = \"open\"\ndestination = \"firefox-work\"\n",
+            profile.display()
+        ),
+    );
+
+    let output = browser_picker(&config_home)
+        .env("XDG_DATA_HOME", &data_home)
+        .env("XDG_DATA_DIRS", &data_home)
+        .arg("diagnose")
+        .arg("https://work.example/mail")
+        .output()
+        .expect("Browser Picker should start");
+    let stdout = String::from_utf8(output.stdout).expect("diagnostic output should be UTF-8");
+
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        stdout,
+        "kind=web\nresult=dispatched\ndestination=firefox-work\nmode=normal\nprivate=available\navailability=unavailable\n"
+    );
+}
+
+#[test]
 fn lost_private_capability_keeps_configuration_and_does_not_downgrade() {
     let config_home = TempDir::new().expect("temporary configuration home should be created");
     let snap_bin = config_home.path().join("snap/bin");
