@@ -36,9 +36,21 @@ pub struct SaveResult {
     pub warnings: Vec<String>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct FileIdentity {
+    path_dev: u64,
+    path_ino: u64,
+    is_symlink: bool,
+    link_target: Option<PathBuf>,
+    target: PathBuf,
+    target_dev: u64,
+    target_ino: u64,
+}
+
 pub struct ConfigurationStore {
     path: PathBuf,
     original_bytes: Option<Vec<u8>>,
+    original_identity: Option<FileIdentity>,
     document: DocumentMut,
     pub configuration: Option<Configuration>,
     pub warnings: Vec<String>,
@@ -102,6 +114,7 @@ impl ConfigurationStore {
         Self {
             path: path.to_path_buf(),
             original_bytes: None,
+            original_identity: None,
             document: DocumentMut::new(),
             configuration: None,
             warnings: Vec::new(),
@@ -113,6 +126,7 @@ impl ConfigurationStore {
         Self {
             path: path.to_path_buf(),
             original_bytes: None,
+            original_identity: None,
             document: DocumentMut::new(),
             configuration: None,
             warnings: Vec::new(),
@@ -130,6 +144,7 @@ impl ConfigurationStore {
             return Ok(Self {
                 path: path.to_path_buf(),
                 original_bytes: Some(bytes),
+                original_identity: capture_identity(path)?,
                 document: DocumentMut::new(),
                 configuration: None,
                 warnings,
@@ -151,6 +166,7 @@ impl ConfigurationStore {
         Ok(Self {
             path: path.to_path_buf(),
             original_bytes: Some(bytes),
+            original_identity: capture_identity(path)?,
             document,
             configuration,
             warnings,
@@ -181,9 +197,11 @@ impl ConfigurationStore {
         backup_first: bool,
     ) -> Result<SaveResult, Error> {
         let current = read_optional(&self.path)?;
-        if current.as_deref() != self.original_bytes.as_deref()
-            && policy == SaveConflictPolicy::Abort
-        {
+        let current_identity = capture_identity(&self.path)?;
+        let content_changed = current.as_deref() != self.original_bytes.as_deref();
+        let identity_changed = current_identity != self.original_identity;
+        let baseline_changed = content_changed || identity_changed;
+        if baseline_changed && policy == SaveConflictPolicy::Abort {
             return Err(Error::Conflict);
         }
 
@@ -201,8 +219,7 @@ impl ConfigurationStore {
 
         let needs_backup = backup_first
             || matches!(self.status, StoreStatus::Migratable(_))
-            || (policy == SaveConflictPolicy::Overwrite
-                && current.as_deref() != self.original_bytes.as_deref());
+            || (policy == SaveConflictPolicy::Overwrite && baseline_changed);
         let backup_path = if needs_backup {
             if !target.exists() {
                 return Err(Error::Conflict);
@@ -212,10 +229,22 @@ impl ConfigurationStore {
             None
         };
 
-        atomic_replace(&target, rendered.as_bytes())?;
-        prune_backups(&target)?;
+        if let Err(error) = atomic_replace(&target, rendered.as_bytes()) {
+            if let Some(path) = &backup_path {
+                let _ = fs::remove_file(path);
+            }
+            return Err(error);
+        }
+        record_committed_durability(
+            &mut warnings,
+            flush_directory(target.parent()),
+            prune_backups(&target),
+        );
 
         self.original_bytes = Some(rendered.into_bytes());
+        if let Ok(identity) = capture_identity(&self.path) {
+            self.original_identity = identity;
+        }
         self.document = String::from_utf8(self.original_bytes.clone().unwrap())
             .expect("saved configuration is UTF-8")
             .parse()
@@ -343,6 +372,41 @@ fn toml_item_value(item: &Item) -> Option<toml::Value> {
     toml::from_str(&format!("wrapper = {text}"))
         .ok()
         .or_else(|| toml::from_str(&text).ok())
+}
+
+fn capture_identity(path: &Path) -> Result<Option<FileIdentity>, Error> {
+    let metadata = match fs::symlink_metadata(path) {
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(Error::Read(error.kind())),
+        Ok(metadata) => metadata,
+    };
+    if !metadata.file_type().is_file() && !metadata.file_type().is_symlink() {
+        return Ok(None);
+    }
+    let is_symlink = metadata.file_type().is_symlink();
+    let link_target = if is_symlink {
+        Some(fs::read_link(path).map_err(|error| Error::Read(error.kind()))?)
+    } else {
+        None
+    };
+    let Some(target) = resolve_existing(path)? else {
+        return Ok(None);
+    };
+    let target_metadata = match fs::metadata(&target) {
+        Ok(metadata) if metadata.is_file() => metadata,
+        Ok(_) => return Ok(None),
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(Error::Read(error.kind())),
+    };
+    Ok(Some(FileIdentity {
+        path_dev: metadata.dev(),
+        path_ino: metadata.ino(),
+        is_symlink,
+        link_target,
+        target,
+        target_dev: target_metadata.dev(),
+        target_ino: target_metadata.ino(),
+    }))
 }
 
 fn resolve_path(path: &Path) -> Result<PathBuf, Error> {
@@ -534,12 +598,32 @@ fn atomic_replace(target: &Path, contents: &[u8]) -> Result<(), Error> {
         let _ = fs::remove_file(&temporary);
         Error::Save(error.kind())
     })?;
-    if let Some(parent) = target.parent()
-        && let Ok(directory) = File::open(parent)
-    {
-        let _ = directory.sync_all();
-    }
     Ok(())
+}
+
+fn record_committed_durability(
+    warnings: &mut Vec<String>,
+    flushed: Result<(), Error>,
+    pruned: Result<(), Error>,
+) {
+    if flushed.is_err() {
+        warnings.push(i18n::text(
+            "Configuration was saved, but the directory could not be flushed",
+        ));
+    }
+    if pruned.is_err() {
+        warnings.push(i18n::text(
+            "Configuration was saved, but older backups could not be pruned",
+        ));
+    }
+}
+
+fn flush_directory(directory: Option<&Path>) -> Result<(), Error> {
+    let Some(directory) = directory else {
+        return Ok(());
+    };
+    let file = File::open(directory).map_err(|error| Error::Save(error.kind()))?;
+    file.sync_all().map_err(|error| Error::Save(error.kind()))
 }
 
 fn temp_path(target: &Path) -> PathBuf {
@@ -758,6 +842,112 @@ mode = "private"
     }
 
     #[test]
+    fn same_content_rename_save_replacement_is_a_conflict() {
+        let dir = TempDir::new().unwrap();
+        let path = write_sample(&dir, "Work");
+        let mut store = ConfigurationStore::open_path(&path).unwrap();
+        let updated = relabel(store.configuration.clone().unwrap(), "Office");
+        let original = fs::read(&path).unwrap();
+        let original_ino = fs::metadata(&path).unwrap().ino();
+        let replacement = dir.path().join("external.toml");
+        fs::write(&replacement, &original).unwrap();
+        fs::rename(&replacement, &path).unwrap();
+        assert_ne!(fs::metadata(&path).unwrap().ino(), original_ino);
+        assert_eq!(fs::read(&path).unwrap(), original);
+        assert!(matches!(
+            store.save(&updated, SaveConflictPolicy::Abort),
+            Err(Error::Conflict)
+        ));
+        assert_eq!(fs::read(&path).unwrap(), original);
+        let result = store.save(&updated, SaveConflictPolicy::Overwrite).unwrap();
+        let backup = result
+            .backup_path
+            .expect("overwrite should backup the replacement");
+        assert_eq!(fs::read(&backup).unwrap(), original);
+        assert_eq!(
+            fs::metadata(&backup).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert!(
+            fs::read_to_string(&path)
+                .unwrap()
+                .contains("label = \"Office\"")
+        );
+    }
+
+    #[test]
+    fn same_content_symlink_replacement_is_a_conflict() {
+        let dir = TempDir::new().unwrap();
+        let path = write_sample(&dir, "Work");
+        let mut store = ConfigurationStore::open_path(&path).unwrap();
+        let updated = relabel(store.configuration.clone().unwrap(), "Office");
+        let original = fs::read(&path).unwrap();
+        fs::remove_file(&path).unwrap();
+        let target = dir.path().join("real.toml");
+        fs::write(&target, &original).unwrap();
+        unix_fs::symlink(&target, &path).unwrap();
+        assert!(matches!(
+            store.save(&updated, SaveConflictPolicy::Abort),
+            Err(Error::Conflict)
+        ));
+        assert!(path.symlink_metadata().unwrap().file_type().is_symlink());
+        assert_eq!(fs::read(&target).unwrap(), original);
+        let result = store.save(&updated, SaveConflictPolicy::Overwrite).unwrap();
+        let backup = result
+            .backup_path
+            .expect("overwrite should backup the symlink target");
+        assert_eq!(fs::read(&backup).unwrap(), original);
+        assert_eq!(
+            fs::metadata(&backup).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert!(path.symlink_metadata().unwrap().file_type().is_symlink());
+        assert!(
+            fs::read_to_string(&target)
+                .unwrap()
+                .contains("label = \"Office\"")
+        );
+    }
+
+    #[test]
+    fn same_content_symlink_retargeting_is_a_conflict() {
+        let dir = TempDir::new().unwrap();
+        let first = dir.path().join("first.toml");
+        let second = dir.path().join("second.toml");
+        let path = dir.path().join("config.toml");
+        fs::write(&first, sample("Work")).unwrap();
+        unix_fs::symlink(&first, &path).unwrap();
+        let mut store = ConfigurationStore::open_path(&path).unwrap();
+        let updated = relabel(store.configuration.clone().unwrap(), "Office");
+        fs::write(&second, sample("Work")).unwrap();
+        fs::remove_file(&path).unwrap();
+        unix_fs::symlink(&second, &path).unwrap();
+        assert!(matches!(
+            store.save(&updated, SaveConflictPolicy::Abort),
+            Err(Error::Conflict)
+        ));
+        assert_eq!(fs::read_to_string(&first).unwrap(), sample("Work"));
+        assert_eq!(fs::read_to_string(&second).unwrap(), sample("Work"));
+        let result = store.save(&updated, SaveConflictPolicy::Overwrite).unwrap();
+        let backup = result
+            .backup_path
+            .expect("overwrite should backup the current target");
+        assert_eq!(fs::read_to_string(&backup).unwrap(), sample("Work"));
+        assert_eq!(
+            fs::metadata(&backup).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert!(path.symlink_metadata().unwrap().file_type().is_symlink());
+        assert_eq!(fs::read_link(&path).unwrap(), second);
+        assert_eq!(fs::read_to_string(&first).unwrap(), sample("Work"));
+        assert!(
+            fs::read_to_string(&second)
+                .unwrap()
+                .contains("label = \"Office\"")
+        );
+    }
+
+    #[test]
     fn atomicity_failure_leaves_the_original_file_unchanged() {
         let dir = TempDir::new().unwrap();
         let path = write_sample(&dir, "Work");
@@ -772,6 +962,107 @@ mode = "private"
             Err(Error::Save(ErrorKind::PermissionDenied))
         ));
         assert_eq!(fs::read_to_string(&path).unwrap(), original);
+    }
+
+    #[test]
+    fn committed_durability_failures_are_warnings_not_unchanged_saves() {
+        let mut warnings = Vec::new();
+        record_committed_durability(
+            &mut warnings,
+            Err(Error::Save(ErrorKind::PermissionDenied)),
+            Err(Error::Save(ErrorKind::IsADirectory)),
+        );
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.contains("directory could not be flushed")),
+            "{warnings:?}"
+        );
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.contains("backups could not be pruned")),
+            "{warnings:?}"
+        );
+        let dir = TempDir::new().unwrap();
+        let missing = dir.path().join("missing-directory");
+        assert!(flush_directory(Some(&missing)).is_err());
+    }
+
+    fn picker_backups(dir: &Path) -> Vec<String> {
+        let mut names: Vec<_> = fs::read_dir(dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|name| name.contains(".bak-"))
+            .collect();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn failed_overwrite_removes_its_backup_and_does_not_prune_older_backups() {
+        let dir = TempDir::new().unwrap();
+        let path = write_sample(&dir, "Work");
+        for index in 1..=5 {
+            fs::write(
+                dir.path()
+                    .join(format!("config.toml.bak-2020010{index}T000000Z")),
+                format!("old-{index}"),
+            )
+            .unwrap();
+        }
+        let mut store = ConfigurationStore::open_path(&path).unwrap();
+        let updated = relabel(store.configuration.clone().unwrap(), "Office");
+        fs::write(&path, sample("External")).unwrap();
+        let temporary = dir.path().join(".config.toml.tmp");
+        fs::create_dir(&temporary).unwrap();
+        let before = picker_backups(dir.path());
+        let result = store.save(&updated, SaveConflictPolicy::Overwrite);
+        assert!(matches!(result, Err(Error::Save(_))), "{result:?}");
+        assert_eq!(fs::read_to_string(&path).unwrap(), sample("External"));
+        assert_eq!(picker_backups(dir.path()), before);
+        fs::remove_dir(&temporary).unwrap();
+    }
+
+    #[test]
+    fn prune_failure_after_replace_still_reports_the_committed_save() {
+        let dir = TempDir::new().unwrap();
+        let path = write_sample(&dir, "Work");
+        for index in 1..=6 {
+            let backup = dir
+                .path()
+                .join(format!("config.toml.bak-2020010{index}T000000Z"));
+            if index == 1 {
+                fs::create_dir(&backup).unwrap();
+            } else {
+                fs::write(&backup, format!("old-{index}")).unwrap();
+            }
+        }
+        let mut store = ConfigurationStore::open_path(&path).unwrap();
+        let updated = relabel(store.configuration.clone().unwrap(), "Office");
+        let result = store
+            .save(&updated, SaveConflictPolicy::Abort)
+            .expect("a committed replacement should still be reported as saved");
+        assert!(
+            result
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("backups could not be pruned")),
+            "{:?}",
+            result.warnings
+        );
+        assert!(
+            fs::read_to_string(&path)
+                .unwrap()
+                .contains("label = \"Office\"")
+        );
+        assert!(matches!(store.status, StoreStatus::Current));
+        assert_eq!(
+            store.configuration.as_ref().unwrap().destinations[0].label,
+            "Office"
+        );
+        assert!(dir.path().join("config.toml.bak-20200101T000000Z").is_dir());
+        assert!(dir.path().join("config.toml.bak-20200106T000000Z").exists());
     }
 
     #[test]
