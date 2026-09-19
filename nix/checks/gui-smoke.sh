@@ -16,8 +16,11 @@ set -eu
                 export LC_ALL=C.UTF-8
                 export XDG_RUNTIME_DIR="$TMPDIR/runtime"
                 export XDG_DATA_HOME="$TMPDIR/xdg-data"
+                export XDG_STATE_HOME="$TMPDIR/xdg-state"
+                export XDG_CACHE_HOME="$TMPDIR/xdg-cache"
                 export XDG_DATA_DIRS="$BROWSER_PICKER/share${XDG_DATA_DIRS:+:$XDG_DATA_DIRS}"
-                mkdir -p "$HOME" "$XDG_RUNTIME_DIR" "$XDG_DATA_HOME/applications"
+                mkdir -p "$HOME" "$XDG_RUNTIME_DIR" "$XDG_DATA_HOME/applications" \
+                  "$XDG_STATE_HOME" "$XDG_CACHE_HOME"
                 chmod 700 "$XDG_RUNTIME_DIR"
 
                 cat > "$TMPDIR/controlled-browser" <<'EOF'
@@ -675,7 +678,9 @@ $suggested"
                       test -n "$window"
                       xdotool windowfocus --sync "$window"
 
-                      $BROWSER_PICKER/bin/browser-picker "$second" "$duplicate"
+                      $BROWSER_PICKER/bin/browser-picker "$second" "$duplicate" &
+                      secondary=$!
+                      wait "$secondary"
                       kill -0 "$launcher"
 
                       for expected_lines in 2 4 6; do
@@ -730,15 +735,28 @@ $duplicate"
                       xdotool key Escape
                       kill -0 "$launcher"
                       test "$(xdotool getwindowname "$window")" = "Browser Picker"
-                      xdotool key alt+2
-                      for attempt in $(seq 1 100); do
-                        test -f "$BROWSER_PICKER_TEST_OUTPUT" && break
-                        sleep 0.1
+                      for expected_lines in 2 4; do
+                        xdotool key alt+2
+                        for attempt in $(seq 1 100); do
+                          actual_lines=$(wc -l < "$BROWSER_PICKER_TEST_OUTPUT" 2>/dev/null || printf 0)
+                          test "$actual_lines" -lt "$expected_lines" || break
+                          sleep 0.1
+                        done
                       done
                       test "$(cat "$BROWSER_PICKER_TEST_OUTPUT")" = "--normal
-https://queue-1.example/"
+https://queue-1.example/
+--normal
+https://queue-2.example/"
                       xdotool key --clearmodifiers ctrl+w
                       wait "$launcher"
+                      if grep -Fq "https://queue-3.example/" "$BROWSER_PICKER_TEST_OUTPUT"; then
+                        echo "closing the Picker launched a cancelled Pending Request" >&2
+                        exit 1
+                      fi
+                      if grep -Fq "https://queue-100.example/" "$BROWSER_PICKER_TEST_OUTPUT"; then
+                        echo "overflow rejected request was launched" >&2
+                        exit 1
+                      fi
                       unset BROWSER_PICKER_TEST_OUTPUT
                     }
 
@@ -770,15 +788,28 @@ https://queue-1.example/"
                       grep -Fx "One activation accepts at most 100 Open Targets" "$TMPDIR/activation-limit-error"
                       xdotool windowfocus --sync "$window"
                       xdotool key Escape
-                      xdotool key alt+2
-                      for attempt in $(seq 1 100); do
-                        test -f "$BROWSER_PICKER_TEST_OUTPUT" && break
-                        sleep 0.1
+                      for expected_lines in 2 4; do
+                        xdotool key alt+2
+                        for attempt in $(seq 1 100); do
+                          actual_lines=$(wc -l < "$BROWSER_PICKER_TEST_OUTPUT" 2>/dev/null || printf 0)
+                          test "$actual_lines" -lt "$expected_lines" || break
+                          sleep 0.1
+                        done
                       done
                       test "$(cat "$BROWSER_PICKER_TEST_OUTPUT")" = "--normal
-https://activation-1.example/"
+https://activation-1.example/
+--normal
+https://activation-2.example/"
                       xdotool key --clearmodifiers ctrl+w
                       wait "$launcher"
+                      if grep -Fq "https://activation-3.example/" "$BROWSER_PICKER_TEST_OUTPUT"; then
+                        echo "closing the Picker launched a cancelled Pending Request" >&2
+                        exit 1
+                      fi
+                      if grep -Fq "https://activation-101.example/" "$BROWSER_PICKER_TEST_OUTPUT"; then
+                        echo "activation overflow rejected request was launched" >&2
+                        exit 1
+                      fi
                       unset BROWSER_PICKER_TEST_OUTPUT
                     }
 
@@ -1300,6 +1331,290 @@ $target"
                       export XDG_CONFIG_HOME="$TMPDIR/config"
                     }
 
+                    assert_open_targets_not_persisted() {
+                      python3 - "$XDG_STATE_HOME" "$XDG_CACHE_HOME" "$XDG_CONFIG_HOME" "$HOME" "$@" <<'PY'
+from pathlib import Path
+import sys
+
+roots = [Path(arg) for arg in sys.argv[1:5]]
+needles = sys.argv[5:]
+leaks = []
+for root in roots:
+    if not root.exists():
+        continue
+    for path in root.rglob("*"):
+        if not path.is_file():
+            continue
+        text = path.read_text(errors="replace")
+        for needle in needles:
+            if needle in text:
+                leaks.append(f"{path}: {needle}")
+if leaks:
+    raise SystemExit("Pending Requests persisted to XDG state:\n" + "\n".join(leaks))
+print("no Pending Request Open Targets persisted")
+PY
+                    }
+
+                    run_concurrent_secondaries_fifo_duplicates_and_bypass() {
+                      export BROWSER_PICKER_TEST_OUTPUT="$TMPDIR/session-concurrent-argv"
+                      rm -f "$BROWSER_PICKER_TEST_OUTPUT"
+                      first="https://session-first.example/"
+                      second="https://session-second.example/path"
+                      duplicate="https://session-first.example/"
+                      overlap_a="https://session-overlap-a.example/"
+                      overlap_b="https://session-overlap-b.example/"
+                      automatic="https://automatic.example/open-bypass"
+
+                      $BROWSER_PICKER/bin/browser-picker "$first" &
+                      launcher=$!
+                      window=
+                      for attempt in $(seq 1 100); do
+                        set -- $(xdotool search --onlyvisible --name "^Browser Picker$" 2>/dev/null || true)
+                        if [ "$#" -gt 0 ]; then
+                          window=$1
+                          break
+                        fi
+                        sleep 0.1
+                      done
+                      test -n "$window"
+                      xdotool windowfocus --sync "$window"
+
+                      $BROWSER_PICKER/bin/browser-picker "$automatic"
+                      for attempt in $(seq 1 100); do
+                        test -f "$BROWSER_PICKER_TEST_OUTPUT" && break
+                        sleep 0.1
+                      done
+                      test "$(cat "$BROWSER_PICKER_TEST_OUTPUT")" = "--normal
+$automatic"
+                      kill -0 "$launcher"
+
+                      $BROWSER_PICKER/bin/browser-picker "$second" &
+                      secondary_one=$!
+                      wait "$secondary_one"
+                      $BROWSER_PICKER/bin/browser-picker "$duplicate" &
+                      secondary_two=$!
+                      wait "$secondary_two"
+                      $BROWSER_PICKER/bin/browser-picker "$overlap_a" &
+                      overlap_one=$!
+                      $BROWSER_PICKER/bin/browser-picker "$overlap_b" &
+                      overlap_two=$!
+                      wait "$overlap_one"
+                      wait "$overlap_two"
+                      kill -0 "$launcher"
+
+                      xdotool windowfocus --sync "$window"
+                      for expected_lines in 4 6 8 10 12; do
+                        xdotool key alt+2
+                        for attempt in $(seq 1 100); do
+                          actual_lines=$(wc -l < "$BROWSER_PICKER_TEST_OUTPUT" 2>/dev/null || printf 0)
+                          test "$actual_lines" -lt "$expected_lines" || break
+                          sleep 0.1
+                        done
+                      done
+
+                      python3 - "$BROWSER_PICKER_TEST_OUTPUT" "$first" "$second" "$duplicate" "$overlap_a" "$overlap_b" "$automatic" <<'PY'
+from pathlib import Path
+import sys
+
+path, first, second, duplicate, overlap_a, overlap_b, automatic = sys.argv[1:]
+pairs = list(zip(*[iter(Path(path).read_text().splitlines())] * 2))
+if pairs[0] != ("--normal", automatic):
+    raise SystemExit(f"automatic arrival did not bypass the open Picker: {pairs!r}")
+if pairs[1] != ("--normal", first):
+    raise SystemExit(f"primary FIFO did not start with the first Pending Request: {pairs!r}")
+if pairs[2] != ("--normal", second):
+    raise SystemExit(f"accepted secondary did not follow in FIFO order: {pairs!r}")
+if pairs[3] != ("--normal", duplicate):
+    raise SystemExit(f"duplicate Open Target was not preserved: {pairs!r}")
+if {target for _mode, target in pairs[4:]} != {overlap_a, overlap_b}:
+    raise SystemExit(f"overlapping secondaries were not both queued: {pairs!r}")
+if len(pairs) != 6:
+    raise SystemExit(f"unexpected launches: {pairs!r}")
+print("concurrent secondaries preserved FIFO, duplicates, and automatic bypass")
+PY
+                      wait "$launcher"
+                      unset BROWSER_PICKER_TEST_OUTPUT
+                    }
+
+                    run_paused_choice_join_and_resume() {
+                      export BROWSER_PICKER_TEST_OUTPUT="$TMPDIR/paused-join-argv"
+                      rm -f "$BROWSER_PICKER_TEST_OUTPUT"
+                      first="https://pending.example/first"
+                      second="https://pending.example/second"
+                      third="https://pending.example/third"
+                      automatic="https://automatic.example/paused-bypass"
+
+                      $BROWSER_PICKER/bin/browser-picker "$first" &
+                      launcher=$!
+                      window=
+                      for attempt in $(seq 1 100); do
+                        set -- $(xdotool search --onlyvisible --name "^Browser Picker$" 2>/dev/null || true)
+                        if [ "$#" -gt 0 ]; then
+                          window=$1
+                          break
+                        fi
+                        sleep 0.1
+                      done
+                      test -n "$window"
+
+                      $BROWSER_PICKER/bin/browser-picker
+                      for attempt in $(seq 1 100); do
+                        set -- $(xdotool search --onlyvisible --name "^Browser Picker$" 2>/dev/null || true)
+                        if [ "$#" -ge 2 ]; then
+                          break
+                        fi
+                        sleep 0.1
+                      done
+                      set -- $(xdotool search --onlyvisible --name "^Browser Picker$" 2>/dev/null || true)
+                      test "$#" -ge 2
+                      python3 "$inspect" wait "Configuration"
+                      config_window=
+                      for candidate in "$@"; do
+                        if [ "$candidate" != "$window" ]; then
+                          config_window=$candidate
+                          break
+                        fi
+                      done
+                      test -n "$config_window"
+
+                      $BROWSER_PICKER/bin/browser-picker "$second"
+                      $BROWSER_PICKER/bin/browser-picker "$third" "$second"
+                      $BROWSER_PICKER/bin/browser-picker "$automatic"
+                      for attempt in $(seq 1 100); do
+                        test -f "$BROWSER_PICKER_TEST_OUTPUT" && break
+                        sleep 0.1
+                      done
+                      test "$(cat "$BROWSER_PICKER_TEST_OUTPUT")" = "--normal
+$automatic"
+                      kill -0 "$launcher"
+                      xdotool windowfocus --sync "$window" || true
+                      xdotool key --clearmodifiers alt+2
+                      sleep 0.4
+                      test "$(cat "$BROWSER_PICKER_TEST_OUTPUT")" = "--normal
+$automatic"
+
+                      xdotool windowfocus --sync "$config_window"
+                      xdotool key --clearmodifiers ctrl+w
+                      for attempt in $(seq 1 100); do
+                        set -- $(xdotool search --onlyvisible --name "^Browser Picker$" 2>/dev/null || true)
+                        if [ "$#" -eq 1 ]; then
+                          break
+                        fi
+                        sleep 0.1
+                      done
+                      set -- $(xdotool search --onlyvisible --name "^Browser Picker$" 2>/dev/null || true)
+                      test "$#" -eq 1
+                      window=$1
+                      xdotool windowfocus --sync "$window"
+                      python3 "$inspect" wait "pending.example"
+
+                      for expected_lines in 4 6 8 10; do
+                        xdotool key alt+2
+                        for attempt in $(seq 1 100); do
+                          actual_lines=$(wc -l < "$BROWSER_PICKER_TEST_OUTPUT" 2>/dev/null || printf 0)
+                          test "$actual_lines" -lt "$expected_lines" || break
+                          sleep 0.1
+                        done
+                      done
+                      test "$(cat "$BROWSER_PICKER_TEST_OUTPUT")" = "--normal
+$automatic
+--normal
+$first
+--normal
+$second
+--normal
+$third
+--normal
+$second"
+                      wait "$launcher"
+                      unset BROWSER_PICKER_TEST_OUTPUT
+                    }
+
+                    run_primary_restart_drops_queue() {
+                      export BROWSER_PICKER_TEST_OUTPUT="$TMPDIR/restart-argv"
+                      rm -f "$BROWSER_PICKER_TEST_OUTPUT"
+                      before="https://queued-before.example/pending"
+                      also="https://queued-also.example/pending"
+                      after="https://queued-after.example/fresh"
+
+                      $BROWSER_PICKER/bin/browser-picker "$before" &
+                      launcher=$!
+                      window=
+                      for attempt in $(seq 1 100); do
+                        set -- $(xdotool search --onlyvisible --name "^Browser Picker$" 2>/dev/null || true)
+                        if [ "$#" -gt 0 ]; then
+                          window=$1
+                          break
+                        fi
+                        sleep 0.1
+                      done
+                      test -n "$window"
+                      $BROWSER_PICKER/bin/browser-picker "$also"
+                      python3 "$inspect" wait "queued-before.example"
+                      assert_open_targets_not_persisted \
+                        "queued-before.example" "queued-also.example" \
+                        "$before" "$also"
+
+                      kill "$launcher" || true
+                      for attempt in $(seq 1 50); do
+                        kill -0 "$launcher" 2>/dev/null || break
+                        sleep 0.1
+                      done
+                      kill -9 "$launcher" 2>/dev/null || true
+                      wait "$launcher" || true
+                      for attempt in $(seq 1 50); do
+                        set -- $(xdotool search --onlyvisible --name "^Browser Picker$" 2>/dev/null || true)
+                        if [ "$#" -eq 0 ]; then
+                          break
+                        fi
+                        sleep 0.1
+                      done
+                      set -- $(xdotool search --onlyvisible --name "^Browser Picker$" 2>/dev/null || true)
+                      test "$#" -eq 0
+                      assert_open_targets_not_persisted \
+                        "queued-before.example" "queued-also.example" \
+                        "$before" "$also"
+
+                      $BROWSER_PICKER/bin/browser-picker "$after" &
+                      launcher=$!
+                      window=
+                      for attempt in $(seq 1 100); do
+                        set -- $(xdotool search --onlyvisible --name "^Browser Picker$" 2>/dev/null || true)
+                        if [ "$#" -gt 0 ]; then
+                          window=$1
+                          break
+                        fi
+                        sleep 0.1
+                      done
+                      test -n "$window"
+                      python3 "$inspect" wait "queued-after.example"
+                      dump=$(python3 "$inspect" dump)
+                      if printf '%s\n' "$dump" | grep -Fq "queued-before.example"; then
+                        echo "restart restored a Pending Request from disk" >&2
+                        printf '%s\n' "$dump" >&2
+                        exit 1
+                      fi
+                      if printf '%s\n' "$dump" | grep -Fq "queued-also.example"; then
+                        echo "restart restored a Pending Request from disk" >&2
+                        printf '%s\n' "$dump" >&2
+                        exit 1
+                      fi
+                      xdotool windowfocus --sync "$window"
+                      xdotool key alt+2
+                      for attempt in $(seq 1 100); do
+                        test -f "$BROWSER_PICKER_TEST_OUTPUT" && break
+                        sleep 0.1
+                      done
+                      test "$(cat "$BROWSER_PICKER_TEST_OUTPUT")" = "--normal
+$after"
+                      if grep -Fq "queued-before.example" "$BROWSER_PICKER_TEST_OUTPUT"; then
+                        echo "restart launched a restored Pending Request" >&2
+                        exit 1
+                      fi
+                      wait "$launcher"
+                      unset BROWSER_PICKER_TEST_OUTPUT
+                    }
+
                     run_first_run_and_picker
                     run_manual_destination_configuration
                     run_reference_safe_configuration
@@ -1314,6 +1629,9 @@ $target"
                     run_queue_limit_and_escape
                     run_activation_limit
                     run_paused_configuration_and_live_routing
+                    run_concurrent_secondaries_fifo_duplicates_and_bypass
+                    run_paused_choice_join_and_resume
+                    run_primary_restart_drops_queue
                     run_save_and_apply_keeps_pending
                     run_invalid_configuration_recovery
                     run_old_schema_migration_keeps_target_pending
