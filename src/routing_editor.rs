@@ -116,6 +116,27 @@ struct GroupWidgets {
     row: gtk::Box,
 }
 
+/// Everything `build_group` needs to create OR groups and wire their "Add"/"Remove" controls.
+/// Bundled because these four values always travel together (the initial build and the "Add
+/// OR group" handler both need the full set).
+#[derive(Clone)]
+struct GroupEditorContext {
+    on_change: ChangeCallback,
+    groups: Rc<RefCell<Vec<GroupWidgets>>>,
+    groups_box: gtk::Box,
+    add_group: gtk::Button,
+}
+
+/// Everything `build_condition` needs to create AND conditions and wire their "Add"/"Remove"
+/// controls. See `GroupEditorContext` for why these are bundled.
+#[derive(Clone)]
+struct ConditionEditorContext {
+    on_change: ChangeCallback,
+    conditions: Rc<RefCell<Vec<ConditionWidgets>>>,
+    conditions_box: gtk::Box,
+    add: gtk::Button,
+}
+
 #[derive(Clone)]
 struct ConditionWidgets {
     kind: gtk::DropDown,
@@ -246,18 +267,17 @@ impl RoutingRuleEditor {
                 let Some(selected) = list.selected_row() else {
                     return;
                 };
-                let mut rules = rules.borrow_mut();
-                let Some(index) = rules.iter().position(|rule| rule.row == selected) else {
-                    return;
-                };
-                let row = rules.remove(index).row;
-                list.remove(&row);
-                if let Some(next) = rules.get(index).or_else(|| rules.last()) {
-                    list.select_row(Some(&next.row));
-                    next.destination.grab_focus();
-                }
-                drop(rules);
-                notify_change(&on_change);
+                remove_and_refocus(
+                    &on_change,
+                    &rules,
+                    |rule| rule.row == selected,
+                    |removed| list.remove(&removed.row),
+                    |next| {
+                        list.select_row(Some(&next.row));
+                        next.destination.grab_focus();
+                    },
+                    || {},
+                );
             }
         ));
         up.connect_clicked(glib::clone!(
@@ -446,26 +466,20 @@ fn build_rule(rule: RoutingRule, on_change: &ChangeCallback) -> RuleWidgets {
     let groups = Rc::new(RefCell::new(Vec::new()));
     let add_group = gtk::Button::with_label(&i18n::text("Add OR group"));
     add_group.update_property(&[gtk::accessible::Property::Label("Add OR condition group")]);
+    let group_ctx = GroupEditorContext {
+        on_change: on_change.clone(),
+        groups: groups.clone(),
+        groups_box: groups_box.clone(),
+        add_group: add_group.clone(),
+    };
     for group in rule.groups {
-        let widgets = build_group(
-            group,
-            on_change,
-            &groups,
-            groups_box.clone(),
-            add_group.clone(),
-        );
+        let widgets = build_group(group, &group_ctx);
         groups_box.append(&widgets.row);
         groups.borrow_mut().push(widgets);
     }
     add_group.connect_clicked(glib::clone!(
-        #[weak]
-        groups_box,
         #[strong]
-        groups,
-        #[strong]
-        on_change,
-        #[weak]
-        add_group,
+        group_ctx,
         move |_| {
             let widgets = build_group(
                 ConditionGroup {
@@ -475,14 +489,11 @@ fn build_rule(rule: RoutingRule, on_change: &ChangeCallback) -> RuleWidgets {
                         negate: false,
                     }],
                 },
-                &on_change,
-                &groups,
-                groups_box.clone(),
-                add_group.clone(),
+                &group_ctx,
             );
-            groups_box.append(&widgets.row);
-            groups.borrow_mut().push(widgets);
-            notify_change(&on_change);
+            group_ctx.groups_box.append(&widgets.row);
+            group_ctx.groups.borrow_mut().push(widgets);
+            notify_change(&group_ctx.on_change);
         }
     ));
 
@@ -512,13 +523,7 @@ fn build_rule(rule: RoutingRule, on_change: &ChangeCallback) -> RuleWidgets {
     }
 }
 
-fn build_group(
-    group: ConditionGroup,
-    on_change: &ChangeCallback,
-    groups: &Rc<RefCell<Vec<GroupWidgets>>>,
-    groups_box: gtk::Box,
-    add_group: gtk::Button,
-) -> GroupWidgets {
+fn build_group(group: ConditionGroup, ctx: &GroupEditorContext) -> GroupWidgets {
     let row = gtk::Box::new(gtk::Orientation::Vertical, 3);
     let heading = gtk::Label::builder()
         .label(i18n::text("All conditions below must match (AND)"))
@@ -528,27 +533,21 @@ fn build_group(
     let conditions_box = gtk::Box::new(gtk::Orientation::Vertical, 3);
     let conditions = Rc::new(RefCell::new(Vec::new()));
     let add = gtk::Button::with_label(&i18n::text("Add AND condition"));
+    let condition_ctx = ConditionEditorContext {
+        on_change: ctx.on_change.clone(),
+        conditions: conditions.clone(),
+        conditions_box: conditions_box.clone(),
+        add: add.clone(),
+    };
     for condition in group.conditions {
-        let widgets = build_condition(
-            condition,
-            on_change,
-            &conditions,
-            conditions_box.clone(),
-            add.clone(),
-        );
+        let widgets = build_condition(condition, &condition_ctx);
         conditions_box.append(&widgets.row);
         conditions.borrow_mut().push(widgets);
     }
     row.append(&conditions_box);
     add.connect_clicked(glib::clone!(
-        #[weak]
-        conditions_box,
         #[strong]
-        conditions,
-        #[strong]
-        on_change,
-        #[weak]
-        add,
+        condition_ctx,
         move |_| {
             let widgets = build_condition(
                 UrlCondition::Host {
@@ -556,42 +555,32 @@ fn build_group(
                     include_subdomains: false,
                     negate: false,
                 },
-                &on_change,
-                &conditions,
-                conditions_box.clone(),
-                add.clone(),
+                &condition_ctx,
             );
-            conditions_box.append(&widgets.row);
-            conditions.borrow_mut().push(widgets);
-            notify_change(&on_change);
+            condition_ctx.conditions_box.append(&widgets.row);
+            condition_ctx.conditions.borrow_mut().push(widgets);
+            notify_change(&condition_ctx.on_change);
         }
     ));
     let remove = gtk::Button::with_label(&i18n::text("Remove OR group"));
     remove.update_property(&[gtk::accessible::Property::Label("Remove OR group")]);
+    let ctx = ctx.clone();
     remove.connect_clicked(glib::clone!(
         #[weak]
         row,
-        #[weak]
-        groups_box,
         #[strong]
-        groups,
-        #[strong]
-        on_change,
-        #[strong]
-        add_group,
+        ctx,
         move |_| {
-            let mut groups = groups.borrow_mut();
-            if let Some(index) = groups.iter().position(|group| group.row == row) {
-                groups.remove(index);
-                groups_box.remove(&row);
-                if let Some(next) = groups.get(index).or_else(|| groups.last()) {
-                    focus_group(next);
-                } else {
-                    add_group.grab_focus();
-                }
-            }
-            drop(groups);
-            notify_change(&on_change);
+            remove_and_refocus(
+                &ctx.on_change,
+                &ctx.groups,
+                |group| group.row == row,
+                |removed| ctx.groups_box.remove(&removed.row),
+                focus_group,
+                || {
+                    ctx.add_group.grab_focus();
+                },
+            );
         }
     ));
     row.append(&add);
@@ -599,13 +588,8 @@ fn build_group(
     GroupWidgets { conditions, row }
 }
 
-fn build_condition(
-    condition: UrlCondition,
-    on_change: &ChangeCallback,
-    conditions: &Rc<RefCell<Vec<ConditionWidgets>>>,
-    conditions_box: gtk::Box,
-    add: gtk::Button,
-) -> ConditionWidgets {
+fn build_condition(condition: UrlCondition, ctx: &ConditionEditorContext) -> ConditionWidgets {
+    let on_change = &ctx.on_change;
     let labels = ConditionKind::labels();
     let kind = dropdown(&labels, "URL Condition type", on_change);
     let (key_text, value_text, option_active, insensitive_active, negate_active) = match &condition
@@ -700,30 +684,25 @@ fn build_condition(
     row.append(&negate);
     let remove = gtk::Button::with_label(&i18n::text("Remove AND condition"));
     remove.update_property(&[gtk::accessible::Property::Label("Remove AND condition")]);
+    let ctx = ctx.clone();
     remove.connect_clicked(glib::clone!(
         #[weak]
         row,
-        #[weak]
-        conditions_box,
         #[strong]
-        conditions,
-        #[strong]
-        on_change,
-        #[strong]
-        add,
+        ctx,
         move |_| {
-            let mut conditions = conditions.borrow_mut();
-            if let Some(index) = conditions.iter().position(|condition| condition.row == row) {
-                conditions.remove(index);
-                conditions_box.remove(&row);
-                if let Some(next) = conditions.get(index).or_else(|| conditions.last()) {
+            remove_and_refocus(
+                &ctx.on_change,
+                &ctx.conditions,
+                |condition| condition.row == row,
+                |removed| ctx.conditions_box.remove(&removed.row),
+                |next| {
                     next.value.grab_focus();
-                } else {
-                    add.grab_focus();
-                }
-            }
-            drop(conditions);
-            notify_change(&on_change);
+                },
+                || {
+                    ctx.add.grab_focus();
+                },
+            );
         }
     ));
     row.append(&remove);
@@ -847,6 +826,38 @@ fn focus_group(group: &GroupWidgets) {
     if let Some(condition) = group.conditions.borrow().first() {
         condition.value.grab_focus();
     }
+}
+
+/// Removes the item matching `matches` from `items`, removes its widget from the container via
+/// `remove_widget`, and restores keyboard focus: to the item that slid into the removed slot (or
+/// the new last item) via `focus_next`, or to `focus_fallback` when the list is now empty. Shared
+/// by the Routing Rule, OR group, and AND condition "Remove" handlers, which all follow this same
+/// find-remove-refocus shape.
+fn remove_and_refocus<T>(
+    on_change: &ChangeCallback,
+    items: &Rc<RefCell<Vec<T>>>,
+    matches: impl Fn(&T) -> bool,
+    remove_widget: impl FnOnce(&T),
+    focus_next: impl FnOnce(&T),
+    focus_fallback: impl FnOnce(),
+) {
+    let removed_index = {
+        let mut items_ref = items.borrow_mut();
+        let Some(index) = items_ref.iter().position(matches) else {
+            return;
+        };
+        remove_widget(&items_ref.remove(index));
+        index
+    };
+    let items_ref = items.borrow();
+    match items_ref.get(removed_index).or_else(|| items_ref.last()) {
+        Some(next) => focus_next(next),
+        None => {
+            drop(items_ref);
+            focus_fallback();
+        }
+    }
+    notify_change(on_change);
 }
 
 fn notify_change(on_change: &ChangeCallback) {

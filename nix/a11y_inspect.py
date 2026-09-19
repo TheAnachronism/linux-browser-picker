@@ -289,14 +289,11 @@ def require_named_state(name: str, enabled: bool) -> None:
         return
     raise SystemExit(f"missing {name!r}\n{tree_text()}")
 
-def require_named_checked(name: str, checked: bool) -> None:
+def require_named_checked(name: str) -> None:
     for node in pointer_nodes(name):
         states = node_states(node)
-        is_checked = "checked" in states
-        if checked and not is_checked:
+        if "checked" not in states:
             raise SystemExit(f"{name!r} is unchecked: {sorted(states)}\n{tree_text()}")
-        if not checked and is_checked:
-            raise SystemExit(f"{name!r} is checked: {sorted(states)}\n{tree_text()}")
         return
     raise SystemExit(f"missing {name!r}\n{tree_text()}")
 
@@ -314,7 +311,6 @@ def main() -> None:
             "enabled",
             "disabled",
             "checked",
-            "unchecked",
         ),
     )
     parser.add_argument("values", nargs="*")
@@ -348,10 +344,10 @@ def main() -> None:
             raise SystemExit(f"{args.command} requires a name")
         require_named_state(args.values[0], args.command == "enabled")
         return
-    if args.command in {"checked", "unchecked"}:
+    if args.command == "checked":
         if not args.values:
-            raise SystemExit(f"{args.command} requires a name")
-        require_named_checked(args.values[0], args.command == "checked")
+            raise SystemExit("checked requires a name")
+        require_named_checked(args.values[0])
         return
     assert_names(args.values)
 
