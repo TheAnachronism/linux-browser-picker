@@ -17,8 +17,8 @@ nix flake check
 | Keyboard Picker and configuration | `checks.gui-smoke`, `checks.release-proof` | Focus, filter, Enter, Escape, Alt+number, Ctrl+Shift+P, destination and Routing Rule order, unsaved-change dialog, queue transitions |
 | AT-SPI tree | `checks.release-proof` | Names, roles, states, selection, availability, rule/action context, shortcuts; no icon- or position-only identification |
 | Privacy of logs and XDG state | `tests/environment_cli.rs`, `checks.release-proof` | No complete URLs, query values, credentials, file paths, searches, choices, or Pending Requests in diagnostics or persisted state |
-| Nix outputs | `checks.package`, `checks.app`, `checks.development-shell`, `checks.aarch64-defined` | x86_64-linux package/app/development outputs; aarch64-linux package attribute is defined; runtime desktop proof is checklist-only |
-| Home Manager associations | `checks.home-manager-associations` | Optional HTTP/HTTPS and HTML/XHTML defaults without generating canonical TOML |
+| Nix outputs | `checks.package`, `checks.app`, `checks.development-shell`, `checks.aarch64-defined` | x86_64-linux package; default flake app executes `version`; development shell executes rustc and cargo; aarch64-linux package derivation is evaluated; runtime desktop proof is checklist-only |
+| Home Manager associations | `checks.home-manager-associations` | Faithful Home Manager evaluation installs Browser Picker, independently sets HTTP/HTTPS versus HTML/XHTML defaults, and generates no canonical `browser-picker/config.toml` |
 | English-complete, translation-ready copy | `checks.package` `postCheck`, `checks.release-proof` | `msgfmt --check`, catalog/source coverage, no placeholder catalog entries |
 
 Never launch a real Browser Application from the automated suite. Fake destinations record argv instead.
