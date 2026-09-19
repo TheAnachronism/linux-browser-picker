@@ -185,11 +185,14 @@ PY
 }
 
 assert_order() {
-  python3 - "$XDG_CONFIG_HOME/browser-picker/config.toml" <<'PY'
+  python3 - "$XDG_CONFIG_HOME/browser-picker/config.toml" "$1" "$2" "$3" <<'PY'
 from pathlib import Path
 import sys
 
 text = Path(sys.argv[1]).read_text()
+want_ids = sys.argv[2].split(",")
+want_rules = sys.argv[3].split(",")
+label = sys.argv[4]
 ids = []
 for block in text.split("[[destinations]]")[1:]:
     for line in block.splitlines():
@@ -202,11 +205,11 @@ for block in text.split("[[rules]]")[1:]:
         if line.startswith("id = "):
             rules.append(line.split("=", 1)[1].strip().strip('"'))
             break
-if ids[:2] != ["controlled", "alpha"]:
-    raise SystemExit(f"destination order not keyboard-updated: {ids}")
-if rules[:2] != ["later", "suggested"]:
-    raise SystemExit(f"routing rule order not keyboard-updated: {rules}")
-print("keyboard ordering persisted", ids, rules)
+if ids[: len(want_ids)] != want_ids:
+    raise SystemExit(f"destination order not {label}: {ids} (want {want_ids})")
+if rules[: len(want_rules)] != want_rules:
+    raise SystemExit(f"routing rule order not {label}: {rules} (want {want_rules})")
+print(f"{label} ordering persisted", ids, rules)
 PY
 }
 
@@ -260,6 +263,10 @@ inspect assert \
   "state:selected" \
   "<Alt>2" \
   "<Control><Shift>p"
+inspect node "Work Browser" --role "list item" --enabled --selected --shortcut "<Alt>2"
+inspect node "Alpha Browser" --role "list item" --enabled --shortcut "<Alt>1"
+inspect node "Unavailable Browser" --role "list item" --disabled --shortcut "<Alt>3"
+inspect node "Repair" --role "button" --enabled
 xdotool windowfocus --sync "$window"
 xdotool key --clearmodifiers ctrl+w
 wait "$picker"
@@ -292,10 +299,17 @@ xdotool key --clearmodifiers alt+shift+Down
 xdotool key --clearmodifiers alt+Down
 xdotool key --clearmodifiers alt+s
 for attempt in $(seq 1 50); do
-  assert_order && break
+  assert_order controlled,alpha later,suggested keyboard && break
   sleep 0.1
 done
-assert_order
+assert_order controlled,alpha later,suggested keyboard
+inspect assert \
+  "Move destination up" \
+  "Move destination down" \
+  "Move Routing Rule up" \
+  "Move Routing Rule down" \
+  "<Alt><Shift>Down" \
+  "<Alt>Up"
 
 xdotool windowfocus --sync "$window"
 inspect focus "Browser Destination display label"

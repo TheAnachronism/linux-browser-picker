@@ -9,7 +9,9 @@ use crate::configuration::{
     ConditionGroup, LaunchMode, PathComparison, RoutingAction, RoutingRule, UrlCondition,
 };
 use crate::i18n;
+use crate::list_order;
 use crate::open_target::OpenTarget;
+use crate::reorder_ui;
 use crate::routing::RoutingEvaluation;
 
 type ChangeCallback = Rc<RefCell<Option<Rc<dyn Fn()>>>>;
@@ -181,6 +183,28 @@ impl RoutingRuleEditor {
             list.append(&widgets.row);
             rules.borrow_mut().push(widgets);
         }
+        let on_drop: Rc<dyn Fn(usize, usize)> = Rc::new(glib::clone!(
+            #[weak]
+            list,
+            #[strong]
+            rules,
+            move |from, to| {
+                if reorder_ui::move_row_to(
+                    &list,
+                    &mut rules.borrow_mut(),
+                    |rule| rule.row.clone(),
+                    from,
+                    to,
+                ) {
+                    if let Some(row) = list.selected_row() {
+                        row.grab_focus();
+                    }
+                }
+            }
+        ));
+        for rule in rules.borrow().iter() {
+            reorder_ui::attach_row_drag(&rule.row, Rc::clone(&on_drop));
+        }
         if let Some(first) = rules.borrow().first() {
             list.select_row(Some(&first.row));
         }
@@ -227,6 +251,8 @@ impl RoutingRuleEditor {
             rules,
             #[strong]
             on_change,
+            #[strong]
+            on_drop,
             move |_| {
                 let number = rules.borrow().len() + 1;
                 let condition = UrlCondition::Host {
@@ -249,6 +275,7 @@ impl RoutingRuleEditor {
                     },
                 };
                 let widgets = build_rule(rule, &on_change);
+                reorder_ui::attach_row_drag(&widgets.row, Rc::clone(&on_drop));
                 list.append(&widgets.row);
                 list.select_row(Some(&widgets.row));
                 widgets.id.grab_focus();
@@ -455,6 +482,7 @@ fn build_rule(rule: RoutingRule, on_change: &ChangeCallback) -> RuleWidgets {
     });
 
     let header = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    reorder_ui::prepend_handle(&header, &format!("Reorder {}", rule.name));
     header.append(&enabled);
     header.append(&id);
     header.append(&name);
@@ -809,17 +837,14 @@ fn reorder(list: &gtk::ListBox, rules: &Rc<RefCell<Vec<RuleWidgets>>>, direction
     let Some(index) = rules.iter().position(|rule| rule.row == selected) else {
         return;
     };
-    let next = index as isize + direction;
-    if next < 0 || next >= rules.len() as isize {
+    let Some((from, to)) = list_order::neighbor_insertion(rules.len(), index, direction) else {
         return;
+    };
+    if reorder_ui::move_row_to(list, &mut rules, |rule| rule.row.clone(), from, to) {
+        if let Some(row) = list.selected_row() {
+            row.grab_focus();
+        }
     }
-    let next = next as usize;
-    rules.swap(index, next);
-    let row = rules[next].row.clone();
-    list.remove(&row);
-    list.insert(&row, next as i32);
-    list.select_row(Some(&row));
-    row.grab_focus();
 }
 
 fn focus_group(group: &GroupWidgets) {

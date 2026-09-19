@@ -871,6 +871,9 @@ pub(crate) fn show_picker(application: &adw::Application, session: PickerSession
             .activatable(destination.is_available())
             .selectable(true)
             .build();
+        row.update_state(&[gtk::accessible::State::Disabled(
+            !destination.is_available(),
+        )]);
         if index < 9 {
             let shortcut = format!("<Alt>{}", index + 1);
             row.update_property(&[
@@ -1172,24 +1175,26 @@ pub(crate) fn show_picker(application: &adw::Application, session: PickerSession
             let index = (digit - 1) as usize;
             if let Some(row) = rows.get(index).filter(|row| row.is_visible()) {
                 list.select_row(Some(row));
-                launch_destination(
-                    &PickerSurface {
-                        window: &window,
-                        list: &list,
-                        error: &error,
-                        host: &host,
-                        host_details: &host_details,
-                        full_target: &full_target,
-                        reveal: &reveal,
-                        search: &search,
-                        private_mode: &private_mode,
-                        remaining: &remaining,
-                    },
-                    &destinations[index],
-                    &pending,
-                    &destinations,
-                    private_mode.is_active(),
-                );
+                if destinations[index].is_available() {
+                    launch_destination(
+                        &PickerSurface {
+                            window: &window,
+                            list: &list,
+                            error: &error,
+                            host: &host,
+                            host_details: &host_details,
+                            full_target: &full_target,
+                            reveal: &reveal,
+                            search: &search,
+                            private_mode: &private_mode,
+                            remaining: &remaining,
+                        },
+                        &destinations[index],
+                        &pending,
+                        &destinations,
+                        private_mode.is_active(),
+                    );
+                }
             }
             return glib::Propagation::Stop;
         }
@@ -1382,6 +1387,9 @@ fn activate_selected(
     let Some(destination) = destinations.get(row.index() as usize) else {
         return;
     };
+    if !destination.is_available() {
+        return;
+    }
     launch_destination(
         surface,
         destination,

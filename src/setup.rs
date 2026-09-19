@@ -16,8 +16,10 @@ use crate::configuration::{
 };
 use crate::discovery::{self, BrowserCandidate};
 use crate::i18n;
+use crate::list_order;
 use crate::open_target::OpenTarget;
 use crate::profiles::{self, ProfileCapability, ProfileIdentity};
+use crate::reorder_ui;
 use crate::routing;
 use crate::routing_editor::{self, RoutingRuleEditor};
 
@@ -292,9 +294,14 @@ pub fn present(application: &adw::Application, session: PickerSession, store: Co
     ]);
     content.append(&save);
 
+    let page = gtk::ScrolledWindow::builder()
+        .child(&content)
+        .hscrollbar_policy(gtk::PolicyType::Never)
+        .vexpand(true)
+        .build();
     let toolbar = adw::ToolbarView::new();
     toolbar.add_top_bar(&adw::HeaderBar::new());
-    toolbar.set_content(Some(&content));
+    toolbar.set_content(Some(&page));
     let window = adw::ApplicationWindow::builder()
         .application(application)
         .title(i18n::text("Browser Picker"))
@@ -394,6 +401,28 @@ pub fn present(application: &adw::Application, session: PickerSession, store: Co
             refresh_references();
         }
     );
+    let on_drop: Rc<dyn Fn(usize, usize)> = Rc::new(glib::clone!(
+        #[weak]
+        list,
+        #[strong]
+        items,
+        #[strong]
+        refresh_fallback,
+        move |from, to| {
+            if reorder_ui::move_row_to(
+                &list,
+                &mut items.borrow_mut(),
+                |item| item.row.clone(),
+                from,
+                to,
+            ) {
+                refresh_fallback();
+            }
+        }
+    ));
+    for item in items.borrow().iter() {
+        reorder_ui::attach_row_drag(&item.row, Rc::clone(&on_drop));
+    }
     refresh_fallback();
     fallback.connect_selected_notify(glib::clone!(
         #[strong]
@@ -525,9 +554,11 @@ pub fn present(application: &adw::Application, session: PickerSession, store: Co
         items,
         #[strong]
         refresh_fallback,
+        #[strong]
+        on_drop,
         move |_| {
             let ordinary = discovery::discover().ordinary;
-            refresh_profiles(&list, &items, &ordinary);
+            refresh_profiles(&list, &items, &ordinary, &on_drop);
             refresh_fallback();
         }
     ));
@@ -542,6 +573,8 @@ pub fn present(application: &adw::Application, session: PickerSession, store: Co
         preferred_fallback,
         #[strong]
         refresh_fallback,
+        #[strong]
+        on_drop,
         move |_| {
             let mut used_ids = items
                 .borrow()
@@ -556,6 +589,7 @@ pub fn present(application: &adw::Application, session: PickerSession, store: Co
                 &preferred_fallback,
                 refresh_fallback.clone(),
             );
+            reorder_ui::attach_row_drag(&item.row, Rc::clone(&on_drop));
             list.append(&item.row);
             list.select_row(Some(&item.row));
             item.id.grab_focus();
@@ -1054,6 +1088,7 @@ fn refresh_profiles(
     list: &gtk::ListBox,
     items: &Rc<RefCell<Vec<EditorItem>>>,
     ordinary: &[BrowserCandidate],
+    on_drop: &Rc<dyn Fn(usize, usize)>,
 ) {
     let mut items = items.borrow_mut();
     let mut used_ids: HashSet<String> = items
@@ -1069,6 +1104,7 @@ fn refresh_profiles(
         append_profile_candidates(candidate, &mut items, &mut used_ids, &configured_profiles);
     }
     for item in items.iter().skip(start) {
+        reorder_ui::attach_row_drag(&item.row, Rc::clone(on_drop));
         list.append(&item.row);
     }
 }
@@ -1346,6 +1382,7 @@ fn build_item(
     icon_image.set_pixel_size(32);
 
     let header = gtk::Box::new(gtk::Orientation::Horizontal, 9);
+    reorder_ui::prepend_handle(&header, &format!("Reorder {name}"));
     header.append(&icon_image);
     header.append(&enable);
 
@@ -1542,16 +1579,10 @@ fn reorder(list: &gtk::ListBox, items: &Rc<RefCell<Vec<EditorItem>>>, direction:
     let Some(index) = items.iter().position(|item| item.row == selected) else {
         return;
     };
-    let next = index as isize + direction;
-    if next < 0 || next >= items.len() as isize {
+    let Some((from, to)) = list_order::neighbor_insertion(items.len(), index, direction) else {
         return;
-    }
-    let next = next as usize;
-    items.swap(index, next);
-    let row = items[next].row.clone();
-    list.remove(&row);
-    list.insert(&row, next as i32);
-    list.select_row(Some(&row));
+    };
+    reorder_ui::move_row_to(list, &mut items, |item| item.row.clone(), from, to);
 }
 
 fn editor_arguments(editor: &gtk::TextView) -> Vec<String> {

@@ -70,6 +70,7 @@ def node_states(node: Atspi.Accessible) -> set[str]:
         "ACTIVE",
         "MODAL",
         "EDITABLE",
+        "DISABLED",
     ):
         state = getattr(Atspi.StateType, name, None)
         if state is None:
@@ -289,6 +290,40 @@ def require_named_state(name: str, enabled: bool) -> None:
         return
     raise SystemExit(f"missing {name!r}\n{tree_text()}")
 
+def require_named_binding(
+    name: str,
+    role: str | None,
+    enabled: bool | None,
+    selected: bool,
+    focused: bool,
+    shortcut: str | None,
+) -> None:
+    haystack = tree_text()
+    for node in iter_nodes():
+        if node_name(node) != name:
+            continue
+        if role is not None and node_role(node) != role:
+            continue
+        states = node_states(node)
+        is_enabled = "enabled" in states or "sensitive" in states
+        if enabled is True and not is_enabled:
+            continue
+        if enabled is False and is_enabled:
+            continue
+        if selected and "selected" not in states:
+            continue
+        if focused and "focused" not in states:
+            continue
+        if shortcut is not None and node_shortcuts(node) != shortcut:
+            continue
+        return
+    raise SystemExit(
+        "no accessible bound "
+        f"name={name!r} role={role!r} enabled={enabled!r} "
+        f"selected={selected} focused={focused} shortcut={shortcut!r}\n{haystack}"
+    )
+
+
 def require_named_checked(name: str) -> None:
     for node in pointer_nodes(name):
         states = node_states(node)
@@ -311,10 +346,17 @@ def main() -> None:
             "enabled",
             "disabled",
             "checked",
+            "node",
         ),
     )
     parser.add_argument("values", nargs="*")
     parser.add_argument("--timeout", type=float, default=15.0)
+    parser.add_argument("--role")
+    parser.add_argument("--shortcut")
+    parser.add_argument("--selected", action="store_true")
+    parser.add_argument("--focused", action="store_true")
+    parser.add_argument("--enabled", dest="node_enabled", action="store_true")
+    parser.add_argument("--disabled", dest="node_disabled", action="store_true")
     args = parser.parse_args()
     if args.command == "dump":
         sys.stdout.write(tree_text() + "\n")
@@ -348,6 +390,21 @@ def main() -> None:
         if not args.values:
             raise SystemExit("checked requires a name")
         require_named_checked(args.values[0])
+        return
+    if args.command == "node":
+        if not args.values:
+            raise SystemExit("node requires a name")
+        if args.node_enabled and args.node_disabled:
+            raise SystemExit("node cannot be both enabled and disabled")
+        enabled = True if args.node_enabled else False if args.node_disabled else None
+        require_named_binding(
+            args.values[0],
+            args.role,
+            enabled,
+            args.selected,
+            args.focused,
+            args.shortcut,
+        )
         return
     assert_names(args.values)
 
