@@ -264,6 +264,39 @@ msgstr "Browser Destination display label"
 msgid "Icon override"
 msgstr "Icon override"
 
+msgid "Add Manual Browser Application"
+msgstr "Add Manual Browser Application"
+
+msgid "Manual Browser Application"
+msgstr "Manual Browser Application"
+
+msgid "Manual Browser"
+msgstr "Manual Browser"
+
+msgid "Browser Application label"
+msgstr "Browser Application label"
+
+msgid "Manual executable"
+msgstr "Manual executable"
+
+msgid "Absolute executable or PATH name"
+msgstr "Absolute executable or PATH name"
+
+msgid "Normal literal arguments"
+msgstr "Normal literal arguments"
+
+msgid "Private literal arguments"
+msgstr "Private literal arguments"
+
+msgid ""
+"Enter one literal argument per line; blank lines are ignored. Exactly one "
+"line must be {target}. Shell syntax is never interpreted. Leave private "
+"arguments empty to disable private Launch Mode."
+msgstr ""
+"Enter one literal argument per line; blank lines are ignored. Exactly one "
+"line must be {target}. Shell syntax is never interpreted. Leave private "
+"arguments empty to disable private Launch Mode."
+
 msgid "_Partial handlers"
 msgstr "_Partial handlers"
 

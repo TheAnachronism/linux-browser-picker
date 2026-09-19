@@ -1191,7 +1191,96 @@ EOF
                                       export XDG_CONFIG_HOME="$TMPDIR/config"
                                     }
 
+                                    run_manual_destination_configuration() {
+                                      export XDG_CONFIG_HOME="$TMPDIR/manual-config"
+                                      mkdir -p "$XDG_CONFIG_HOME"
+                                      export BROWSER_PICKER_TEST_OUTPUT="$TMPDIR/manual-argv"
+                                      rm -f "$BROWSER_PICKER_TEST_OUTPUT"
+                                      cat > "$TMPDIR/graphical-browser" <<'EOF'
+                #!/bin/sh
+                printf "%s\n" "\$@" > "\$BROWSER_PICKER_TEST_OUTPUT"
+                EOF
+                                      chmod 700 "$TMPDIR/graphical-browser"
+
+                                      ${browser-picker}/bin/browser-picker config &
+                                      launcher=$!
+                                      window=
+                                      for attempt in $(seq 1 100); do
+                                        set -- $(xdotool search --onlyvisible --name "^Browser Picker$" 2>/dev/null || true)
+                                        if [ "$#" -gt 0 ]; then
+                                          window=$1
+                                          break
+                                        fi
+                                        sleep 0.1
+                                      done
+                                      test -n "$window"
+                                      python3 "$inspect" focus "Add Manual Browser Application"
+                                      xdotool key --clearmodifiers space
+                                      sleep 0.2
+                                      python3 "$inspect" assert \
+                                        "Browser Application label" \
+                                        "Manual executable" \
+                                        "Normal literal arguments" \
+                                        "Private literal arguments"
+                                      xdotool key --clearmodifiers ctrl+a
+                                      xdotool type "graphical-manual"
+                                      xdotool key Tab
+                                      xdotool key --clearmodifiers ctrl+a
+                                      xdotool type "Graphical Manual Browser"
+                                      xdotool key Tab
+                                      xdotool key --clearmodifiers ctrl+a
+                                      xdotool type "applications-internet"
+                                      xdotool key Tab
+                                      xdotool key --clearmodifiers ctrl+a
+                                      xdotool type "Graphical Browser Application"
+                                      xdotool key Tab
+                                      xdotool key --clearmodifiers ctrl+a
+                                      xdotool type "$TMPDIR/graphical-browser"
+                                      xdotool key Tab
+                                      xdotool key --clearmodifiers ctrl+a
+                                      xdotool type -- "--graphical"
+                                      xdotool key Return
+                                      xdotool type -- "{target}"
+                                      xdotool key Tab
+                                      xdotool type -- "--private"
+                                      xdotool key Return
+                                      xdotool type -- "{target}"
+                                      python3 "$inspect" focus "Show Picker"
+                                      xdotool key --clearmodifiers space Down Return
+                                      xdotool key --clearmodifiers alt+s
+
+                                      for attempt in $(seq 1 100); do
+                                        test -f "$XDG_CONFIG_HOME/browser-picker/config.toml" && break
+                                        sleep 0.1
+                                      done
+                                      config="$XDG_CONFIG_HOME/browser-picker/config.toml"
+                                      grep -q "id = \"graphical-manual\"" "$config"
+                                      grep -q "label = \"Graphical Manual Browser\"" "$config"
+                                      grep -q "label = \"Graphical Browser Application\"" "$config"
+                                      grep -q "icon = \"applications-internet\"" "$config"
+                                      grep -q "args = \[" "$config"
+                                      grep -q "\"--graphical\"" "$config"
+                                      grep -q "private_args = \[" "$config"
+                                      grep -q "\"--private\"" "$config"
+                                      xdotool windowfocus --sync "$window"
+                                      xdotool key --clearmodifiers ctrl+w
+                                      wait "$launcher"
+
+                                      target="https://manual.example/reloaded"
+                                      ${browser-picker}/bin/browser-picker "$target"
+                                      expected="--graphical
+                $target"
+                                      for attempt in $(seq 1 100); do
+                                        test "$(cat "$BROWSER_PICKER_TEST_OUTPUT" 2>/dev/null || true)" = "$expected" && break
+                                        sleep 0.1
+                                      done
+                                      test "$(cat "$BROWSER_PICKER_TEST_OUTPUT")" = "$expected"
+                                      unset BROWSER_PICKER_TEST_OUTPUT
+                                      export XDG_CONFIG_HOME="$TMPDIR/config"
+                                    }
+
                                     run_first_run_and_picker
+                                    run_manual_destination_configuration
                                     run_and_assert_window ${browser-picker}/bin/browser-picker
                                     run_and_assert_window gtk-launch io.github.TheAnachronism.BrowserPicker
                                     run_picker_and_assert_launch

@@ -22,9 +22,19 @@ use crate::routing;
 use crate::routing_editor::{self, RoutingRuleEditor};
 
 #[derive(Clone)]
+struct ManualEditor {
+    root: gtk::Box,
+    application_label: gtk::Entry,
+    executable: gtk::Entry,
+    arguments: gtk::TextView,
+    private_arguments: gtk::TextView,
+}
+
+#[derive(Clone)]
 struct EditorItem {
     launch: DestinationLaunch,
     application_label: String,
+    manual: Option<ManualEditor>,
     profile_label: Option<String>,
     enabled: gtk::CheckButton,
     enable_allowed: bool,
@@ -168,6 +178,11 @@ pub fn present(application: &adw::Application, session: PickerSession, store: Co
     ]);
     order.append(&move_up);
     order.append(&move_down);
+    let add_manual = gtk::Button::with_label(&i18n::text("Add Manual Browser Application"));
+    add_manual.update_property(&[gtk::accessible::Property::Label(
+        "Add Manual Browser Application",
+    )]);
+    order.append(&add_manual);
     let refresh = gtk::Button::with_label(&i18n::text("Refresh Browser Profiles"));
     refresh.update_property(&[gtk::accessible::Property::Label("Refresh Browser Profiles")]);
     order.append(&refresh);
@@ -445,6 +460,43 @@ pub fn present(application: &adw::Application, session: PickerSession, store: Co
         refresh_fallback,
         move |_| {
             refresh_profiles(&list, &items, &ordinary);
+            refresh_fallback();
+        }
+    ));
+    add_manual.connect_clicked(glib::clone!(
+        #[weak]
+        list,
+        #[strong]
+        items,
+        #[strong]
+        refresh_fallback,
+        move |_| {
+            let mut used_ids = items
+                .borrow()
+                .iter()
+                .map(|item| item.id.text().to_string())
+                .collect();
+            let slug = discovery::unique_slug("manual-browser", &mut used_ids);
+            let item = item_from_manual(slug);
+            item.enabled.connect_toggled(glib::clone!(
+                #[strong]
+                refresh_fallback,
+                move |_| refresh_fallback()
+            ));
+            item.id.connect_changed(glib::clone!(
+                #[strong]
+                refresh_fallback,
+                move |_| refresh_fallback()
+            ));
+            item.label.connect_changed(glib::clone!(
+                #[strong]
+                refresh_fallback,
+                move |_| refresh_fallback()
+            ));
+            list.append(&item.row);
+            list.select_row(Some(&item.row));
+            item.id.grab_focus();
+            items.borrow_mut().push(item);
             refresh_fallback();
         }
     ));
@@ -1056,7 +1108,107 @@ fn item_from_profile(
     )
 }
 
+fn item_from_manual(slug: String) -> EditorItem {
+    build_item(
+        DestinationLaunch::Manual {
+            executable: String::new(),
+            arguments: vec!["{target}".to_owned()],
+            private_arguments: None,
+        },
+        i18n::text("Manual Browser Application"),
+        None,
+        true,
+        &slug,
+        &i18n::text("Manual Browser"),
+        "",
+        &i18n::text("Manual Browser"),
+        None,
+        None,
+        true,
+    )
+}
+
+fn argument_editor(label: &str, arguments: &[String]) -> (gtk::Box, gtk::TextView) {
+    let heading = gtk::Label::builder().label(label).xalign(0.0).build();
+    let editor = gtk::TextView::new();
+    editor.set_monospace(true);
+    editor.set_wrap_mode(gtk::WrapMode::None);
+    editor.set_accepts_tab(false);
+    editor.buffer().set_text(&arguments.join("\n"));
+    editor.update_property(&[gtk::accessible::Property::Label(label)]);
+    let scroller = gtk::ScrolledWindow::builder()
+        .child(&editor)
+        .min_content_height(72)
+        .hscrollbar_policy(gtk::PolicyType::Automatic)
+        .build();
+    let group = gtk::Box::new(gtk::Orientation::Vertical, 3);
+    group.append(&heading);
+    group.append(&scroller);
+    (group, editor)
+}
+
+fn manual_editor(launch: &DestinationLaunch, application_label: &str) -> Option<ManualEditor> {
+    let DestinationLaunch::Manual {
+        executable,
+        arguments,
+        private_arguments,
+    } = launch
+    else {
+        return None;
+    };
+    let application_label_name = i18n::text("Browser Application label");
+    let application_label_entry = gtk::Entry::builder()
+        .text(application_label)
+        .placeholder_text(&application_label_name)
+        .build();
+    application_label_entry
+        .update_property(&[gtk::accessible::Property::Label(&application_label_name)]);
+    let executable_name = i18n::text("Manual executable");
+    let executable_entry = gtk::Entry::builder()
+        .text(executable)
+        .placeholder_text(i18n::text("Absolute executable or PATH name"))
+        .build();
+    executable_entry.update_property(&[gtk::accessible::Property::Label(&executable_name)]);
+    let normal_arguments_label = i18n::text("Normal literal arguments");
+    let (arguments_group, arguments) =
+        argument_editor(&normal_arguments_label, arguments.as_slice());
+    let private_arguments_label = i18n::text("Private literal arguments");
+    let (private_arguments_group, private_arguments) = argument_editor(
+        &private_arguments_label,
+        private_arguments.as_deref().unwrap_or_default(),
+    );
+    let guidance = gtk::Label::builder()
+        .label(i18n::text(
+            "Enter one literal argument per line; blank lines are ignored. Exactly one line must be {target}. Shell syntax is never interpreted. Leave private arguments empty to disable private Launch Mode.",
+        ))
+        .xalign(0.0)
+        .wrap(true)
+        .build();
+    guidance.add_css_class("dim-label");
+    let root = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    root.append(&application_label_entry);
+    root.append(&executable_entry);
+    root.append(&arguments_group);
+    root.append(&private_arguments_group);
+    root.append(&guidance);
+    Some(ManualEditor {
+        root,
+        application_label: application_label_entry,
+        executable: executable_entry,
+        arguments,
+        private_arguments,
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
+fn set_enable_name(enable: &gtk::CheckButton, name: &str) {
+    enable.set_label(Some(name));
+    enable.update_property(&[gtk::accessible::Property::Label(&i18n::text_with(
+        "Enable Browser Candidate {name}",
+        &[("{name}", name)],
+    ))]);
+}
+
 fn build_item(
     launch: DestinationLaunch,
     application_label: String,
@@ -1070,12 +1222,9 @@ fn build_item(
     assumptions: Option<String>,
     enable_allowed: bool,
 ) -> EditorItem {
-    let enable = gtk::CheckButton::with_label(name);
+    let enable = gtk::CheckButton::new();
     enable.set_active(enabled);
-    enable.update_property(&[gtk::accessible::Property::Label(&i18n::text_with(
-        "Enable Browser Candidate {name}",
-        &[("{name}", name)],
-    ))]);
+    set_enable_name(&enable, name);
     if !enable_allowed && !enabled {
         enable.set_sensitive(false);
         enable.set_tooltip_text(Some(&i18n::text(
@@ -1105,6 +1254,14 @@ fn build_item(
     fields.append(&id_entry);
     fields.append(&label_entry);
     fields.append(&icon_entry);
+    let manual = manual_editor(&launch, &application_label);
+    if manual.is_some() {
+        label_entry.connect_changed(glib::clone!(
+            #[weak]
+            enable,
+            move |label| set_enable_name(&enable, label.text().as_str())
+        ));
+    }
 
     let icon_image = if let Some(icon) = candidate_icon {
         gtk::Image::from_gicon(&icon)
@@ -1131,6 +1288,9 @@ fn build_item(
     body.set_margin_end(12);
     body.append(&header);
     body.append(&fields);
+    if let Some(manual) = &manual {
+        body.append(&manual.root);
+    }
     if let Some(assumptions) = assumptions {
         let details = gtk::Label::builder()
             .label(assumptions)
@@ -1155,6 +1315,7 @@ fn build_item(
     EditorItem {
         launch,
         application_label,
+        manual,
         profile_label,
         enabled: enable,
         enable_allowed,
@@ -1262,6 +1423,19 @@ fn reorder(list: &gtk::ListBox, items: &Rc<RefCell<Vec<EditorItem>>>, direction:
     list.select_row(Some(&row));
 }
 
+fn editor_arguments(editor: &gtk::TextView) -> Vec<String> {
+    let buffer = editor.buffer();
+    let text = buffer.text(&buffer.start_iter(), &buffer.end_iter(), true);
+    if text.is_empty() {
+        Vec::new()
+    } else {
+        text.split('\n')
+            .filter(|argument| !argument.is_empty())
+            .map(str::to_owned)
+            .collect()
+    }
+}
+
 fn collect_configuration(
     items: &[EditorItem],
     rules: &[RoutingRule],
@@ -1275,17 +1449,35 @@ fn collect_configuration(
             continue;
         }
         let icon = item.icon.text();
+        let (application_label, launch) = match &item.manual {
+            Some(manual) => {
+                let private_arguments = editor_arguments(&manual.private_arguments);
+                (
+                    manual.application_label.text().to_string(),
+                    DestinationLaunch::Manual {
+                        executable: manual.executable.text().to_string(),
+                        arguments: editor_arguments(&manual.arguments),
+                        private_arguments: if private_arguments.is_empty() {
+                            None
+                        } else {
+                            Some(private_arguments)
+                        },
+                    },
+                )
+            }
+            None => (item.application_label.clone(), item.launch.clone()),
+        };
         let destination = BrowserDestination {
             id: item.id.text().to_string(),
             label: item.label.text().to_string(),
-            application_label: item.application_label.clone(),
+            application_label,
             profile_label: item.profile_label.clone(),
             icon_name: if icon.is_empty() {
                 None
             } else {
                 Some(icon.to_string())
             },
-            launch: item.launch.clone(),
+            launch,
             unavailable_reason: None,
         };
         enabled_ids.push(destination.id.clone());
