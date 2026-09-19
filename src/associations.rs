@@ -24,18 +24,123 @@ pub struct AssociationReport {
     pub xhtml: DefaultHandler,
 }
 
-pub fn report() -> AssociationReport {
-    report_in(&config_home(), &data_directories())
+#[derive(Clone, Debug)]
+pub(crate) struct AssociationSearch<'a> {
+    pub config_home: &'a Path,
+    pub config_dirs: &'a [PathBuf],
+    pub data_home: &'a Path,
+    pub data_dirs: &'a [PathBuf],
+    pub current_desktop: &'a str,
 }
 
+pub fn report() -> AssociationReport {
+    let config_home = config_home();
+    let data_home = data_home();
+    let config_dirs = config_dirs();
+    let data_dirs = data_directories();
+    let current_desktop = env::var("XDG_CURRENT_DESKTOP").unwrap_or_default();
+    report_from(&AssociationSearch {
+        config_home: &config_home,
+        config_dirs: &config_dirs,
+        data_home: &data_home,
+        data_dirs: &data_dirs,
+        current_desktop: &current_desktop,
+    })
+}
+
+#[cfg(test)]
 pub(crate) fn report_in(config_home: &Path, data_directories: &[PathBuf]) -> AssociationReport {
-    let (defaults, removed) = read_mimeapps(&config_home.join("mimeapps.list"));
+    let data_home = data_directories
+        .first()
+        .map_or(Path::new(""), PathBuf::as_path);
+    report_from(&AssociationSearch {
+        config_home,
+        config_dirs: &[],
+        data_home,
+        data_dirs: data_directories,
+        current_desktop: "",
+    })
+}
+
+pub(crate) fn report_from(search: &AssociationSearch<'_>) -> AssociationReport {
+    let data_directories = application_data_directories(search);
+    let files = mimeapps_files(search);
     AssociationReport {
-        http: handler_for(HTTP, &defaults, &removed, data_directories),
-        https: handler_for(HTTPS, &defaults, &removed, data_directories),
-        html: handler_for(HTML, &defaults, &removed, data_directories),
-        xhtml: handler_for(XHTML, &defaults, &removed, data_directories),
+        http: default_for(HTTP, &files, &data_directories),
+        https: default_for(HTTPS, &files, &data_directories),
+        html: default_for(HTML, &files, &data_directories),
+        xhtml: default_for(XHTML, &files, &data_directories),
     }
+}
+
+fn mimeapps_files(search: &AssociationSearch<'_>) -> Vec<PathBuf> {
+    let desktops = desktop_names(search.current_desktop);
+    let mut files = Vec::new();
+    push_config_mimeapps(&mut files, search.config_home, &desktops);
+    for directory in search.config_dirs {
+        push_config_mimeapps(&mut files, directory, &desktops);
+    }
+    push_data_mimeapps(&mut files, search.data_home, &desktops);
+    for directory in search.data_dirs {
+        if directory == search.data_home {
+            continue;
+        }
+        push_data_mimeapps(&mut files, directory, &desktops);
+    }
+    files
+}
+
+fn desktop_names(current_desktop: &str) -> Vec<String> {
+    current_desktop
+        .split(':')
+        .map(|token| token.trim().to_ascii_lowercase())
+        .filter(|token| !token.is_empty())
+        .collect()
+}
+
+fn push_config_mimeapps(files: &mut Vec<PathBuf>, directory: &Path, desktops: &[String]) {
+    push_mimeapps_in(files, directory, desktops);
+}
+
+fn push_data_mimeapps(files: &mut Vec<PathBuf>, directory: &Path, desktops: &[String]) {
+    if directory.as_os_str().is_empty() {
+        return;
+    }
+    push_mimeapps_in(files, &directory.join("applications"), desktops);
+}
+
+fn push_mimeapps_in(files: &mut Vec<PathBuf>, directory: &Path, desktops: &[String]) {
+    if directory.as_os_str().is_empty() {
+        return;
+    }
+    for desktop in desktops {
+        files.push(directory.join(format!("{desktop}-mimeapps.list")));
+    }
+    files.push(directory.join("mimeapps.list"));
+}
+
+fn default_for(mime: &str, files: &[PathBuf], data_directories: &[PathBuf]) -> DefaultHandler {
+    for path in files {
+        let (defaults, removed) = read_mimeapps(path);
+        if defaults.contains_key(mime) {
+            return handler_for(mime, &defaults, &removed, data_directories);
+        }
+    }
+    DefaultHandler::Unset
+}
+
+fn application_data_directories(search: &AssociationSearch<'_>) -> Vec<PathBuf> {
+    let mut directories = Vec::new();
+    if !search.data_home.as_os_str().is_empty() {
+        directories.push(search.data_home.to_path_buf());
+    }
+    for directory in search.data_dirs {
+        if directories.iter().any(|existing| existing == directory) {
+            continue;
+        }
+        directories.push(directory.clone());
+    }
+    directories
 }
 
 impl AssociationReport {
@@ -197,17 +302,36 @@ fn config_home() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(".config"))
 }
 
-fn data_directories() -> Vec<PathBuf> {
-    let mut directories = Vec::new();
+fn config_dirs() -> Vec<PathBuf> {
+    split_env_paths("XDG_CONFIG_DIRS").unwrap_or_else(|| vec![PathBuf::from("/etc/xdg")])
+}
+
+fn data_home() -> PathBuf {
     if let Some(directory) = env::var_os("XDG_DATA_HOME") {
-        directories.push(PathBuf::from(directory));
-    } else if let Some(home) = env::var_os("HOME") {
-        directories.push(PathBuf::from(home).join(".local/share"));
+        return PathBuf::from(directory);
     }
-    if let Some(dirs) = env::var_os("XDG_DATA_DIRS") {
-        directories.extend(env::split_paths(&dirs));
-    }
+    env::var_os("HOME")
+        .map(|home| PathBuf::from(home).join(".local/share"))
+        .unwrap_or_else(|| PathBuf::from(".local/share"))
+}
+
+fn data_directories() -> Vec<PathBuf> {
+    let mut directories = vec![data_home()];
+    directories.extend(split_env_paths("XDG_DATA_DIRS").unwrap_or_else(|| {
+        vec![
+            PathBuf::from("/usr/local/share"),
+            PathBuf::from("/usr/share"),
+        ]
+    }));
     directories
+}
+
+fn split_env_paths(key: &str) -> Option<Vec<PathBuf>> {
+    let value = env::var_os(key)?;
+    let paths: Vec<_> = env::split_paths(&value)
+        .filter(|path| path.as_os_str().is_empty() == false)
+        .collect();
+    (!paths.is_empty()).then_some(paths)
 }
 
 #[cfg(test)]
@@ -274,6 +398,149 @@ mod tests {
         assert!(!generic.to_ascii_lowercase().contains("set as default"));
         assert!(!generic.contains("xdg-settings"));
         assert!(!generic.contains("xdg-mime"));
+    }
+
+    #[test]
+    fn system_config_mimeapps_are_used_when_the_user_file_has_no_default() {
+        let home = TempDir::new().expect("isolated XDG home should be created");
+        let data_home = home.path().join("share");
+        let config_home = home.path().join("config");
+        let config_dir = home.path().join("etc/xdg");
+        let applications = data_home.join("applications");
+        fs::create_dir_all(&applications).expect("application directory should be created");
+        fs::create_dir_all(&config_home).expect("config directory should be created");
+        fs::create_dir_all(&config_dir).expect("system config directory should be created");
+        fs::write(
+            applications.join("other-browser.desktop"),
+            "[Desktop Entry]\nType=Application\nName=Other Browser\nExec=/bin/true %u\nMimeType=x-scheme-handler/http;x-scheme-handler/https;text/html;application/xhtml+xml;\n",
+        )
+        .expect("other desktop entry should be writable");
+        fs::write(
+            config_dir.join("mimeapps.list"),
+            "[Default Applications]\nx-scheme-handler/http=other-browser.desktop\n",
+        )
+        .expect("system mimeapps.list should be writable");
+
+        let report = report_from(&AssociationSearch {
+            config_home: &config_home,
+            config_dirs: &[config_dir],
+            data_home: &data_home,
+            data_dirs: &[],
+            current_desktop: "GNOME",
+        });
+        assert_eq!(
+            report.http,
+            DefaultHandler::Other {
+                name: "Other Browser".to_owned()
+            }
+        );
+        assert_eq!(report.https, DefaultHandler::Unset);
+    }
+
+    fn write_desktop(applications: &Path, desktop_id: &str, name: &str) {
+        fs::write(
+            applications.join(desktop_id),
+            format!(
+                "[Desktop Entry]\nType=Application\nName={name}\nExec=/bin/true %u\nMimeType=x-scheme-handler/http;x-scheme-handler/https;text/html;application/xhtml+xml;\n"
+            ),
+        )
+        .expect("desktop entry should be writable");
+    }
+
+    fn isolated_search(
+        home: &TempDir,
+    ) -> (
+        std::path::PathBuf,
+        std::path::PathBuf,
+        std::path::PathBuf,
+        std::path::PathBuf,
+    ) {
+        let data_home = home.path().join("share");
+        let config_home = home.path().join("config");
+        let config_dir = home.path().join("etc/xdg");
+        let applications = data_home.join("applications");
+        fs::create_dir_all(&applications).expect("application directory should be created");
+        fs::create_dir_all(&config_home).expect("config directory should be created");
+        fs::create_dir_all(&config_dir).expect("system config directory should be created");
+        write_desktop(
+            &applications,
+            "io.github.TheAnachronism.BrowserPicker.desktop",
+            "Browser Picker",
+        );
+        write_desktop(&applications, "other-browser.desktop", "Other Browser");
+        (config_home, config_dir, data_home, applications)
+    }
+
+    #[test]
+    fn user_mimeapps_override_system_and_desktop_specific_files_win_for_that_desktop() {
+        let home = TempDir::new().expect("isolated XDG home should be created");
+        let (config_home, config_dir, data_home, applications) = isolated_search(&home);
+        fs::write(
+            config_dir.join("mimeapps.list"),
+            "[Default Applications]\nx-scheme-handler/http=other-browser.desktop\nx-scheme-handler/https=other-browser.desktop\ntext/html=other-browser.desktop\napplication/xhtml+xml=other-browser.desktop\n",
+        )
+        .expect("system mimeapps.list should be writable");
+        fs::write(
+            config_home.join("mimeapps.list"),
+            "[Default Applications]\nx-scheme-handler/https=io.github.TheAnachronism.BrowserPicker.desktop\ntext/html=other-browser.desktop\n",
+        )
+        .expect("user mimeapps.list should be writable");
+        fs::write(
+            config_home.join("gnome-mimeapps.list"),
+            "[Default Applications]\nx-scheme-handler/http=io.github.TheAnachronism.BrowserPicker.desktop\n",
+        )
+        .expect("desktop-specific mimeapps.list should be writable");
+        fs::write(
+            applications.join("mimeapps.list"),
+            "[Default Applications]\napplication/xhtml+xml=other-browser.desktop\n",
+        )
+        .expect("data mimeapps.list should be writable");
+
+        let gnome = report_from(&AssociationSearch {
+            config_home: &config_home,
+            config_dirs: &[config_dir.clone()],
+            data_home: &data_home,
+            data_dirs: &[],
+            current_desktop: "GNOME:GNOME-Classic",
+        });
+        assert_eq!(gnome.http, DefaultHandler::BrowserPicker);
+        assert_eq!(gnome.https, DefaultHandler::BrowserPicker);
+        assert_eq!(
+            gnome.html,
+            DefaultHandler::Other {
+                name: "Other Browser".to_owned()
+            }
+        );
+        assert_eq!(
+            gnome.xhtml,
+            DefaultHandler::Other {
+                name: "Other Browser".to_owned()
+            }
+        );
+        assert_eq!(
+            gnome.lines(),
+            [
+                "HTTP: Browser Picker",
+                "HTTPS: Browser Picker",
+                "HTML: Other Browser",
+                "XHTML: Other Browser"
+            ]
+        );
+
+        let other_desktop = report_from(&AssociationSearch {
+            config_home: &config_home,
+            config_dirs: &[config_dir],
+            data_home: &data_home,
+            data_dirs: &[],
+            current_desktop: "KDE",
+        });
+        assert_eq!(
+            other_desktop.http,
+            DefaultHandler::Other {
+                name: "Other Browser".to_owned()
+            },
+            "a GNOME-only override must not apply on KDE"
+        );
     }
 
     #[test]

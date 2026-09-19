@@ -160,6 +160,82 @@ EOF
                       trap - EXIT
                     }
 
+                    gapplication_open() {
+                      gdbus call --session \
+                        --dest io.github.TheAnachronism.BrowserPicker \
+                        --object-path /io/github/TheAnachronism/BrowserPicker \
+                        --method org.freedesktop.Application.Open \
+                        "$1" \
+                        "{}" >/dev/null
+                    }
+
+
+                    run_installed_handler_activations() {
+                      mkdir -p "$XDG_CONFIG_HOME"
+                      cat > "$XDG_CONFIG_HOME/mimeapps.list" <<'EOF'
+[Default Applications]
+x-scheme-handler/http=io.github.TheAnachronism.BrowserPicker.desktop
+x-scheme-handler/https=io.github.TheAnachronism.BrowserPicker.desktop
+text/html=io.github.TheAnachronism.BrowserPicker.desktop
+application/xhtml+xml=io.github.TheAnachronism.BrowserPicker.desktop
+EOF
+                      export BROWSER_PICKER_TEST_OUTPUT="$TMPDIR/handler-argv"
+                      rm -f "$BROWSER_PICKER_TEST_OUTPUT"
+                      mkdir -p "$TMPDIR/docs"
+                      printf x > "$TMPDIR/docs/bootstrap.txt"
+                      printf x > "$TMPDIR/docs/handler.html"
+                      printf '<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml"></html>' > "$TMPDIR/docs/handler.xhtml"
+                      html="$TMPDIR/docs/handler.html"
+                      xhtml="$TMPDIR/docs/handler.xhtml"
+                      $BROWSER_PICKER/bin/browser-picker "$TMPDIR/docs/bootstrap.txt" &
+                      launcher=$!
+                      window=
+                      for attempt in $(seq 1 100); do
+                        set -- $(xdotool search --onlyvisible --name "^Browser Picker$" 2>/dev/null || true)
+                        if [ "$#" -gt 0 ]; then
+                          window=$1
+                          break
+                        fi
+                        sleep 0.1
+                      done
+                      test -n "$window"
+                      test ! -f "$BROWSER_PICKER_TEST_OUTPUT"
+
+                      gapplication_open "['file://$html']"
+                      gapplication_open "['file://$xhtml']"
+                      python3 "$inspect" wait "3 Pending Requests"
+                      test ! -f "$BROWSER_PICKER_TEST_OUTPUT"
+
+                      http="https://automatic.example/from-http-handler"
+                      https="https://automatic.example/from-https-handler"
+                      gapplication_open "['$http']"
+                      for attempt in $(seq 1 100); do
+                        test -f "$BROWSER_PICKER_TEST_OUTPUT" && break
+                        sleep 0.1
+                      done
+                      test "$(cat "$BROWSER_PICKER_TEST_OUTPUT")" = "--normal
+$http"
+
+                      rm -f "$BROWSER_PICKER_TEST_OUTPUT"
+                      gapplication_open "['$https']"
+                      for attempt in $(seq 1 100); do
+                        test -f "$BROWSER_PICKER_TEST_OUTPUT" && break
+                        sleep 0.1
+                      done
+                      test "$(cat "$BROWSER_PICKER_TEST_OUTPUT")" = "--normal
+$https"
+
+                      rm -f "$BROWSER_PICKER_TEST_OUTPUT"
+                      python3 "$inspect" wait "3 Pending Requests"
+                      test ! -f "$BROWSER_PICKER_TEST_OUTPUT"
+                      kill -0 "$launcher"
+                      xdotool windowfocus --sync "$window"
+                      xdotool key --clearmodifiers ctrl+w
+                      wait "$launcher"
+                      test ! -f "$BROWSER_PICKER_TEST_OUTPUT"
+                      unset BROWSER_PICKER_TEST_OUTPUT
+                    }
+
                     run_local_file_actions() {
                       export BROWSER_PICKER_TEST_OUTPUT="$TMPDIR/file-argv"
                       rm -f "$BROWSER_PICKER_TEST_OUTPUT"
@@ -1229,6 +1305,7 @@ $target"
                     run_reference_safe_configuration
                     run_and_assert_window $BROWSER_PICKER/bin/browser-picker
                     run_and_assert_window gtk-launch io.github.TheAnachronism.BrowserPicker
+                    run_installed_handler_activations
                     run_picker_and_assert_launch
                     run_routing_actions
                     run_activation_with_preselection_and_automatic
