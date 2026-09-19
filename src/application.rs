@@ -196,14 +196,14 @@ pub fn run() -> glib::ExitCode {
 
 pub(crate) fn apply_window_state(window: &adw::ApplicationWindow, name: &'static str) {
     let accessible_name = match name {
-        "picker" => "Picker",
-        "setup" | "configuration" => "Configuration",
-        "migration" => "Configuration migration",
-        other => other,
+        "picker" => i18n::text("Picker"),
+        "setup" | "configuration" => i18n::text("Configuration"),
+        "migration" => i18n::text("Configuration migration"),
+        other => other.to_string(),
     };
     gtk::prelude::AccessibleExtManual::update_property(
         window.upcast_ref::<gtk::Widget>(),
-        &[gtk::accessible::Property::Label(accessible_name)],
+        &[gtk::accessible::Property::Label(&accessible_name)],
     );
     if let Some((width, height)) = crate::window_state::load(name) {
         window.set_default_size(width, height);
@@ -470,9 +470,9 @@ fn present_migration(application: &adw::Application, session: &PickerSession) {
         .wrap(true)
         .selectable(true)
         .build();
-    details.update_property(&[gtk::accessible::Property::Description(
+    details.update_property(&[gtk::accessible::Property::Description(&i18n::text(
         "Configuration migration preview",
-    )]);
+    ))]);
     content.append(&details);
     let note = gtk::Label::builder()
         .label(i18n::text(
@@ -488,7 +488,7 @@ fn present_migration(application: &adw::Application, session: &PickerSession) {
     let migrate = gtk::Button::with_mnemonic(&i18n::text("_Migrate"));
     migrate.add_css_class("suggested-action");
     migrate.update_property(&[
-        gtk::accessible::Property::Label("Migrate"),
+        gtk::accessible::Property::Label(&i18n::text("Migrate")),
         gtk::accessible::Property::KeyShortcuts("<Alt>m"),
     ]);
     buttons.append(&cancel);
@@ -632,9 +632,9 @@ fn show_configuration_recovery(
         .selectable(true)
         .build();
     details.add_css_class("error");
-    details.update_property(&[gtk::accessible::Property::Description(
+    details.update_property(&[gtk::accessible::Property::Description(&i18n::text(
         "Configuration recovery error",
-    )]);
+    ))]);
     content.append(&details);
     let hint = gtk::Label::builder()
         .label(i18n::text(
@@ -649,7 +649,7 @@ fn show_configuration_recovery(
     let retry = gtk::Button::with_mnemonic(&i18n::text("_Retry"));
     retry.add_css_class("suggested-action");
     retry.update_property(&[
-        gtk::accessible::Property::Label("Retry"),
+        gtk::accessible::Property::Label(&i18n::text("Retry")),
         gtk::accessible::Property::KeyShortcuts("<Alt>r"),
     ]);
     buttons.append(&retry);
@@ -716,7 +716,9 @@ pub(crate) fn show_picker(application: &adw::Application, session: PickerSession
         .selectable(true)
         .build();
     host.add_css_class("title-1");
-    host.update_property(&[gtk::accessible::Property::Description("Open Target title")]);
+    host.update_property(&[gtk::accessible::Property::Description(&i18n::text(
+        "Open Target title",
+    ))]);
     content.append(&host);
 
     let host_details = gtk::Label::builder()
@@ -731,7 +733,9 @@ pub(crate) fn show_picker(application: &adw::Application, session: PickerSession
         .xalign(0.0)
         .build();
     remaining.add_css_class("dim-label");
-    remaining.update_property(&[gtk::accessible::Property::Label("Pending Request count")]);
+    remaining.update_property(&[gtk::accessible::Property::Label(&i18n::text(
+        "Pending Request count",
+    ))]);
     session.remaining.borrow().set(Some(&remaining));
     content.append(&remaining);
 
@@ -747,9 +751,9 @@ pub(crate) fn show_picker(application: &adw::Application, session: PickerSession
         .selectable(true)
         .visible(false)
         .build();
-    full_target.update_property(&[gtk::accessible::Property::Description(
+    full_target.update_property(&[gtk::accessible::Property::Description(&i18n::text(
         "Full Open Target details",
-    )]);
+    ))]);
     content.append(&full_target);
     reveal.connect_toggled(glib::clone!(
         #[weak]
@@ -772,7 +776,7 @@ pub(crate) fn show_picker(application: &adw::Application, session: PickerSession
     content.append(&edit_rules);
     let repair_configuration = gtk::Button::with_mnemonic(&i18n::text("_Repair configuration"));
     repair_configuration.update_property(&[
-        gtk::accessible::Property::Label("Repair configuration"),
+        gtk::accessible::Property::Label(&i18n::text("Repair configuration")),
         gtk::accessible::Property::KeyShortcuts("<Alt>r"),
     ]);
     repair_configuration.connect_clicked(glib::clone!(
@@ -789,9 +793,9 @@ pub(crate) fn show_picker(application: &adw::Application, session: PickerSession
     let search = gtk::SearchEntry::builder()
         .placeholder_text(i18n::text("Filter destinations"))
         .build();
-    search.update_property(&[gtk::accessible::Property::Label(
+    search.update_property(&[gtk::accessible::Property::Label(&i18n::text(
         "Filter Browser Destinations",
-    )]);
+    ))]);
     content.append(&search);
 
     let error = gtk::Label::builder()
@@ -801,9 +805,9 @@ pub(crate) fn show_picker(application: &adw::Application, session: PickerSession
         .build();
     error.set_focusable(true);
     error.add_css_class("error");
-    error.update_property(&[gtk::accessible::Property::Description(
+    error.update_property(&[gtk::accessible::Property::Description(&i18n::text(
         "Configuration or launch error",
-    )]);
+    ))]);
     if let Some(message) = session.recovery_error.borrow().clone() {
         error.set_label(&message);
         error.set_visible(true);
@@ -814,7 +818,9 @@ pub(crate) fn show_picker(application: &adw::Application, session: PickerSession
     list.set_activate_on_single_click(false);
     list.set_selection_mode(gtk::SelectionMode::Single);
     list.add_css_class("boxed-list");
-    list.update_property(&[gtk::accessible::Property::Label("Browser Destinations")]);
+    list.update_property(&[gtk::accessible::Property::Label(&i18n::text(
+        "Browser Destinations",
+    ))]);
     let mut rows = Vec::with_capacity(destinations.len());
     for (index, destination) in destinations.iter().enumerate() {
         let labels = destination_search_text(destination);
@@ -848,7 +854,7 @@ pub(crate) fn show_picker(application: &adw::Application, session: PickerSession
         if destination.unavailable_reason.is_some() {
             let repair = gtk::Button::with_label(&i18n::text("Repair"));
             repair.update_property(&[
-                gtk::accessible::Property::Label("Repair Browser Destination"),
+                gtk::accessible::Property::Label(&i18n::text("Repair Browser Destination")),
                 gtk::accessible::Property::Description(
                     destination
                         .unavailable_reason
@@ -905,7 +911,7 @@ pub(crate) fn show_picker(application: &adw::Application, session: PickerSession
     let private_mode =
         gtk::CheckButton::with_label(&i18n::text("Private Launch Mode (Ctrl+Shift+P)"));
     private_mode.update_property(&[
-        gtk::accessible::Property::Label("Private Launch Mode"),
+        gtk::accessible::Property::Label(&i18n::text("Private Launch Mode")),
         gtk::accessible::Property::KeyShortcuts("<Control><Shift>p"),
     ]);
     content.append(&private_mode);
@@ -927,7 +933,9 @@ pub(crate) fn show_picker(application: &adw::Application, session: PickerSession
         "No Browser Destinations match this filter.",
     )));
     let clear_filter = gtk::Button::with_label(&i18n::text("Clear filter"));
-    clear_filter.update_property(&[gtk::accessible::Property::Label("Clear destination filter")]);
+    clear_filter.update_property(&[gtk::accessible::Property::Label(&i18n::text(
+        "Clear destination filter",
+    ))]);
     let configure = gtk::Button::with_label(&i18n::text("Configure Browser Picker"));
     no_results.append(&no_results_label);
     no_results.append(&clear_filter);

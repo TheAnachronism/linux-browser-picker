@@ -19,7 +19,7 @@ nix flake check
 | Privacy of logs and XDG state | `tests/environment_cli.rs`, `checks.release-proof` | No complete URLs, query values, credentials, file paths, searches, choices, or Pending Requests in diagnostics or persisted state |
 | Nix outputs | `checks.package`, `checks.app`, `checks.development-shell`, `checks.aarch64-defined` | x86_64-linux package/app/development outputs; aarch64-linux package attribute is defined; runtime desktop proof is checklist-only |
 | Home Manager associations | `checks.home-manager-associations` | Optional HTTP/HTTPS and HTML/XHTML defaults without generating canonical TOML |
-| English-complete, translation-ready copy | `checks.package` `postCheck`, `checks.release-proof` | `msgfmt --check`, no placeholder catalog entries |
+| English-complete, translation-ready copy | `checks.package` `postCheck`, `checks.release-proof` | `msgfmt --check`, catalog/source coverage, no placeholder catalog entries |
 
 Never launch a real Browser Application from the automated suite. Fake destinations record argv instead.
 

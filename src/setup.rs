@@ -105,9 +105,9 @@ pub fn present(application: &adw::Application, session: PickerSession, store: Co
                 .selectable(true)
                 .build();
             recovery.add_css_class("error");
-            recovery.update_property(&[gtk::accessible::Property::Description(
+            recovery.update_property(&[gtk::accessible::Property::Description(&i18n::text(
                 "Configuration recovery error",
-            )]);
+            ))]);
             content.append(&recovery);
             let hint = gtk::Label::builder()
                 .label(i18n::text(
@@ -119,7 +119,7 @@ pub fn present(application: &adw::Application, session: PickerSession, store: Co
             content.append(&hint);
             let retry = gtk::Button::with_mnemonic(&i18n::text("_Retry"));
             retry.update_property(&[
-                gtk::accessible::Property::Label("Retry"),
+                gtk::accessible::Property::Label(&i18n::text("Retry")),
                 gtk::accessible::Property::KeyShortcuts("<Alt>r"),
             ]);
             content.append(&retry);
@@ -131,9 +131,9 @@ pub fn present(application: &adw::Application, session: PickerSession, store: Co
                 .xalign(0.0)
                 .wrap(true)
                 .build();
-            recovery.update_property(&[gtk::accessible::Property::Description(
+            recovery.update_property(&[gtk::accessible::Property::Description(&i18n::text(
                 "Configuration migration preview",
-            )]);
+            ))]);
             content.append(&recovery);
         }
         _ => {}
@@ -154,16 +154,18 @@ pub fn present(application: &adw::Application, session: PickerSession, store: Co
             .selectable(true)
             .build();
         host.add_css_class("heading");
-        host.update_property(&[gtk::accessible::Property::Description(
+        host.update_property(&[gtk::accessible::Property::Description(&i18n::text(
             "Waiting Open Target",
-        )]);
+        ))]);
         content.append(&host);
     }
 
     let list = gtk::ListBox::new();
     list.set_selection_mode(gtk::SelectionMode::Single);
     list.add_css_class("boxed-list");
-    list.update_property(&[gtk::accessible::Property::Label("Browser Candidates")]);
+    list.update_property(&[gtk::accessible::Property::Label(&i18n::text(
+        "Browser Candidates",
+    ))]);
     for item in items.borrow().iter() {
         list.append(&item.row);
     }
@@ -180,23 +182,25 @@ pub fn present(application: &adw::Application, session: PickerSession, store: Co
     let order = gtk::Box::new(gtk::Orientation::Horizontal, 9);
     let move_up = gtk::Button::from_icon_name("go-up-symbolic");
     move_up.update_property(&[
-        gtk::accessible::Property::Label("Move destination up"),
+        gtk::accessible::Property::Label(&i18n::text("Move destination up")),
         gtk::accessible::Property::KeyShortcuts("<Alt><Shift>Up"),
     ]);
     let move_down = gtk::Button::from_icon_name("go-down-symbolic");
     move_down.update_property(&[
-        gtk::accessible::Property::Label("Move destination down"),
+        gtk::accessible::Property::Label(&i18n::text("Move destination down")),
         gtk::accessible::Property::KeyShortcuts("<Alt><Shift>Down"),
     ]);
     order.append(&move_up);
     order.append(&move_down);
     let add_manual = gtk::Button::with_label(&i18n::text("Add Manual Browser Application"));
-    add_manual.update_property(&[gtk::accessible::Property::Label(
+    add_manual.update_property(&[gtk::accessible::Property::Label(&i18n::text(
         "Add Manual Browser Application",
-    )]);
+    ))]);
     order.append(&add_manual);
     let refresh = gtk::Button::with_label(&i18n::text("Refresh Browser Profiles"));
-    refresh.update_property(&[gtk::accessible::Property::Label("Refresh Browser Profiles")]);
+    refresh.update_property(&[gtk::accessible::Property::Label(&i18n::text(
+        "Refresh Browser Profiles",
+    ))]);
     order.append(&refresh);
     content.append(&order);
     content.append(&rule_editor.root);
@@ -208,9 +212,9 @@ pub fn present(application: &adw::Application, session: PickerSession, store: Co
         .wrap(true)
         .build();
     query_warning.add_css_class("dim-label");
-    query_warning.update_property(&[gtk::accessible::Property::Description(
+    query_warning.update_property(&[gtk::accessible::Property::Description(&i18n::text(
         "Exact query values are stored as plain text",
-    )]);
+    ))]);
     content.append(&query_warning);
 
     if !discovery.partial.is_empty() {
@@ -243,7 +247,9 @@ pub fn present(application: &adw::Application, session: PickerSession, store: Co
     content.append(&fallback_label);
     let show_picker_label = i18n::text("Show Picker");
     let fallback = gtk::DropDown::from_strings(&[&show_picker_label]);
-    fallback.update_property(&[gtk::accessible::Property::Label("Fallback Action")]);
+    fallback.update_property(&[gtk::accessible::Property::Label(&i18n::text(
+        "Fallback Action",
+    ))]);
     fallback.set_focusable(true);
     content.append(&fallback);
     let fallback_mode_label = gtk::Label::builder()
@@ -253,7 +259,9 @@ pub fn present(application: &adw::Application, session: PickerSession, store: Co
     content.append(&fallback_mode_label);
     let fallback_mode =
         gtk::DropDown::from_strings(&[&i18n::text("Normal"), &i18n::text("Private")]);
-    fallback_mode.update_property(&[gtk::accessible::Property::Label("Fallback Launch Mode")]);
+    fallback_mode.update_property(&[gtk::accessible::Property::Label(&i18n::text(
+        "Fallback Launch Mode",
+    ))]);
     content.append(&fallback_mode);
 
     if !store.warnings.is_empty() {
@@ -263,9 +271,9 @@ pub fn present(application: &adw::Application, session: PickerSession, store: Co
             .wrap(true)
             .build();
         warning.add_css_class("warning");
-        warning.update_property(&[gtk::accessible::Property::Description(
+        warning.update_property(&[gtk::accessible::Property::Description(&i18n::text(
             "Configuration permission warning",
-        )]);
+        ))]);
         content.append(&warning);
     }
 
@@ -278,9 +286,9 @@ pub fn present(application: &adw::Application, session: PickerSession, store: Co
         .build();
     error.add_css_class("error");
     error.set_focusable(true);
-    error.update_property(&[gtk::accessible::Property::Description(
+    error.update_property(&[gtk::accessible::Property::Description(&i18n::text(
         "Browser Picker configuration error",
-    )]);
+    ))]);
     content.append(&error);
     let save_label = if current_target.is_some() {
         i18n::text("_Save and Apply")
@@ -1020,7 +1028,9 @@ fn append_desktop_defaults(content: &gtk::Box) {
         .xalign(0.0)
         .build();
     heading.add_css_class("heading");
-    heading.update_property(&[gtk::accessible::Property::Label("Desktop defaults")]);
+    heading.update_property(&[gtk::accessible::Property::Label(&i18n::text(
+        "Desktop defaults",
+    ))]);
     content.append(&heading);
 
     let report = associations::report();
@@ -1044,9 +1054,9 @@ fn append_desktop_defaults(content: &gtk::Box) {
         .wrap(true)
         .build();
     instructions.add_css_class("dim-label");
-    instructions.update_property(&[gtk::accessible::Property::Description(
+    instructions.update_property(&[gtk::accessible::Property::Description(&i18n::text(
         "Desktop default association instructions",
-    )]);
+    ))]);
     content.append(&instructions);
 }
 
@@ -1341,19 +1351,23 @@ fn build_item(
         .text(id)
         .placeholder_text(i18n::text("Browser Destination ID"))
         .build();
-    id_entry.update_property(&[gtk::accessible::Property::Label("Browser Destination ID")]);
+    id_entry.update_property(&[gtk::accessible::Property::Label(&i18n::text(
+        "Browser Destination ID",
+    ))]);
     let label_entry = gtk::Entry::builder()
         .text(label)
         .placeholder_text(i18n::text("Browser Destination display label"))
         .build();
-    label_entry.update_property(&[gtk::accessible::Property::Label(
+    label_entry.update_property(&[gtk::accessible::Property::Label(&i18n::text(
         "Browser Destination display label",
-    )]);
+    ))]);
     let icon_entry = gtk::Entry::builder()
         .text(icon)
         .placeholder_text(i18n::text("Icon override"))
         .build();
-    icon_entry.update_property(&[gtk::accessible::Property::Label("Icon override")]);
+    icon_entry.update_property(&[gtk::accessible::Property::Label(&i18n::text(
+        "Icon override",
+    ))]);
 
     let fields = gtk::Box::new(gtk::Orientation::Horizontal, 9);
     fields.append(&id_entry);
@@ -1383,7 +1397,10 @@ fn build_item(
     icon_image.set_pixel_size(32);
 
     let header = gtk::Box::new(gtk::Orientation::Horizontal, 9);
-    let drag_handle = reorder_ui::prepend_handle(&header, &format!("Reorder {name}"));
+    let drag_handle = reorder_ui::prepend_handle(
+        &header,
+        &i18n::text_with("Reorder {name}", &[("{name}", name)]),
+    );
     header.append(&icon_image);
     header.append(&enable);
 

@@ -640,3 +640,227 @@ msgstr ""
 
 msgid "Desktop default association instructions"
 msgstr ""
+
+msgid "Migrate"
+msgstr ""
+
+msgid "Configuration could not be used"
+msgstr ""
+
+msgid ""
+"Retry after setting HOME or an absolute XDG_CONFIG_HOME. Close this window to keep waiting Open Targets queued. Automatic routing stays disabled until configuration can be loaded."
+msgstr ""
+
+msgid "_Retry"
+msgstr ""
+
+msgid "Retry"
+msgstr ""
+
+msgid "Open Target title"
+msgstr ""
+
+msgid "Pending Request count"
+msgstr ""
+
+msgid "Full Open Target details"
+msgstr ""
+
+msgid "Repair configuration"
+msgstr ""
+
+msgid "Filter Browser Destinations"
+msgstr ""
+
+msgid "Browser Destinations"
+msgstr ""
+
+msgid "Repair Browser Destination"
+msgstr ""
+
+msgid "Private Launch Mode"
+msgstr ""
+
+msgid "Clear destination filter"
+msgstr ""
+
+msgid "Configuration was saved, but the directory could not be flushed"
+msgstr ""
+
+msgid "Configuration was saved, but older backups could not be pruned"
+msgstr ""
+
+msgid "Configuration must be a regular file"
+msgstr ""
+
+msgid "Configuration is not owned by the current user"
+msgstr ""
+
+msgid "Configuration symlink is broken"
+msgstr ""
+
+msgid "Reveals credentials, path, query, and fragment"
+msgstr ""
+
+msgid "Drag to reorder"
+msgstr ""
+
+msgid "normal"
+msgstr ""
+
+msgid "private"
+msgstr ""
+
+msgid "Fallback: open {destination} in {mode} Launch Mode"
+msgstr ""
+
+msgid "Fallback: show Picker"
+msgstr ""
+
+msgid "scheme is {value}"
+msgstr ""
+
+msgid "host is {value} or a label-boundary subdomain"
+msgstr ""
+
+msgid "host is exactly {value}"
+msgstr ""
+
+msgid "explicit non-default port is {value}"
+msgstr ""
+
+msgid "path {comparison} {value} ({sensitivity})"
+msgstr ""
+
+msgid "equals"
+msgstr ""
+
+msgid "starts with"
+msgstr ""
+
+msgid "query contains key {key} ({sensitivity})"
+msgstr ""
+
+msgid "query contains {key}={value} ({sensitivity})"
+msgstr ""
+
+msgid "glob {value} matches the Matching URL ({sensitivity})"
+msgstr ""
+
+msgid "regular expression {value} matches the Matching URL ({sensitivity})"
+msgstr ""
+
+msgid "NOT ({description})"
+msgstr ""
+
+msgid "case-insensitive"
+msgstr ""
+
+msgid "case-sensitive"
+msgstr ""
+
+msgid "open"
+msgstr ""
+
+msgid "preselect"
+msgstr ""
+
+msgid "{kind} {destination} in {mode} Launch Mode"
+msgstr ""
+
+msgid "Ordered Routing Rules"
+msgstr ""
+
+msgid "Move Routing Rule up"
+msgstr ""
+
+msgid "Move Routing Rule down"
+msgstr ""
+
+msgid "Routing Rule explanation"
+msgstr ""
+
+msgid "disabled"
+msgstr ""
+
+msgid "FIRST WINNER"
+msgstr ""
+
+msgid "matched after winner"
+msgstr ""
+
+msgid "did not match"
+msgstr ""
+
+msgid "{name} ({id}): {state}"
+msgstr ""
+
+msgid "matched"
+msgstr ""
+
+msgid "  OR group {number}: {state}"
+msgstr ""
+
+msgid "PASS"
+msgstr ""
+
+msgid "FAIL"
+msgstr ""
+
+msgid "    {result} — {description}"
+msgstr ""
+
+msgid "First winner: {winner}"
+msgstr ""
+
+msgid "First winner: none"
+msgstr ""
+
+msgid "Resulting action: {action}"
+msgstr ""
+
+msgid "Routing Rule action"
+msgstr ""
+
+msgid "Action Browser Destination ID"
+msgstr ""
+
+msgid "Action Launch Mode"
+msgstr ""
+
+msgid "Reorder {name}"
+msgstr ""
+
+msgid "Add OR condition group"
+msgstr ""
+
+msgid "URL Condition type"
+msgstr ""
+
+msgid ""
+"The invalid or unusable configuration path was left unchanged. Retry after repairing ownership, permissions, or the symlink, or enable destinations and save to replace a readable invalid file. Independently discovered browsers are listed below."
+msgstr ""
+
+msgid "Waiting Open Target"
+msgstr ""
+
+msgid "Browser Candidates"
+msgstr ""
+
+msgid "Move destination up"
+msgstr ""
+
+msgid "Move destination down"
+msgstr ""
+
+msgid "Browser Picker configuration error"
+msgstr ""
+
+msgid "Picker"
+msgstr ""
+
+msgid "Configuration"
+msgstr ""
+
+msgid "Configuration migration"
+msgstr ""

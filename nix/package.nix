@@ -8,6 +8,7 @@
   libadwaita,
   appstream,
   desktop-file-utils,
+  python3,
   shared-mime-info,
   hicolor-icon-theme,
   systems,
@@ -40,11 +41,13 @@ rustPlatform.buildRustPackage {
   nativeCheckInputs = [
     appstream
     desktop-file-utils
+    python3
   ];
   postCheck = ''
     desktop-file-validate data/io.github.TheAnachronism.BrowserPicker.desktop
     appstreamcli validate --no-net data/io.github.TheAnachronism.BrowserPicker.metainfo.xml
     msgfmt --check po/en.po -o /dev/null
+    python3 nix/i18n_coverage.py src po/en.po
   '';
   BROWSER_PICKER_LOCALEDIR = "${placeholder "out"}/share/locale";
   postInstall = ''

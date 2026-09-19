@@ -5,6 +5,7 @@ use crate::configuration::{
     LaunchMode, MigrationPreview, PathComparison, RoutingAction, RoutingRule, UrlCondition,
 };
 use crate::discovery;
+use crate::i18n;
 use crate::launcher;
 use crate::open_target::{self, OpenTarget, WebTarget};
 
@@ -386,12 +387,15 @@ pub fn evaluate(configuration: &Configuration, target: &WebTarget) -> RoutingEva
         .unwrap_or_else(|| match &configuration.fallback {
             FallbackAction::Open { destination, mode } => {
                 let mode = match mode {
-                    LaunchMode::Normal => "normal",
-                    LaunchMode::Private => "private",
+                    LaunchMode::Normal => i18n::text("normal"),
+                    LaunchMode::Private => i18n::text("private"),
                 };
-                format!("Fallback: open {destination} in {mode} Launch Mode")
+                i18n::text_with(
+                    "Fallback: open {destination} in {mode} Launch Mode",
+                    &[("{destination}", destination), ("{mode}", &mode)],
+                )
             }
-            FallbackAction::ShowPicker => "Fallback: show Picker".to_owned(),
+            FallbackAction::ShowPicker => i18n::text("Fallback: show Picker"),
         });
     RoutingEvaluation {
         matching_url: target.matching_url().to_owned(),
@@ -607,7 +611,10 @@ fn text_equal(candidate: &str, expected: &str, case_insensitive: bool) -> bool {
 
 fn describe_condition(condition: &UrlCondition) -> String {
     match condition {
-        UrlCondition::Scheme { value, negate } => described(*negate, format!("scheme is {value}")),
+        UrlCondition::Scheme { value, negate } => described(
+            *negate,
+            i18n::text_with("scheme is {value}", &[("{value}", value)]),
+        ),
         UrlCondition::Host {
             value,
             include_subdomains,
@@ -615,14 +622,21 @@ fn describe_condition(condition: &UrlCondition) -> String {
         } => described(
             *negate,
             if *include_subdomains {
-                format!("host is {value} or a label-boundary subdomain")
+                i18n::text_with(
+                    "host is {value} or a label-boundary subdomain",
+                    &[("{value}", value)],
+                )
             } else {
-                format!("host is exactly {value}")
+                i18n::text_with("host is exactly {value}", &[("{value}", value)])
             },
         ),
-        UrlCondition::Port { value, negate } => {
-            described(*negate, format!("explicit non-default port is {value}"))
-        }
+        UrlCondition::Port { value, negate } => described(
+            *negate,
+            i18n::text_with(
+                "explicit non-default port is {value}",
+                &[("{value}", &value.to_string())],
+            ),
+        ),
         UrlCondition::Path {
             value,
             comparison,
@@ -630,13 +644,19 @@ fn describe_condition(condition: &UrlCondition) -> String {
             negate,
         } => described(
             *negate,
-            format!(
-                "path {} {value:?} ({})",
-                match comparison {
-                    PathComparison::Exact => "equals",
-                    PathComparison::Prefix => "starts with",
-                },
-                sensitivity(*case_insensitive)
+            i18n::text_with(
+                "path {comparison} {value} ({sensitivity})",
+                &[
+                    (
+                        "{comparison}",
+                        &match comparison {
+                            PathComparison::Exact => i18n::text("equals"),
+                            PathComparison::Prefix => i18n::text("starts with"),
+                        },
+                    ),
+                    ("{value}", &format!("{value:?}")),
+                    ("{sensitivity}", &sensitivity(*case_insensitive)),
+                ],
             ),
         ),
         UrlCondition::QueryKey {
@@ -645,9 +665,12 @@ fn describe_condition(condition: &UrlCondition) -> String {
             negate,
         } => described(
             *negate,
-            format!(
-                "query contains key {key:?} ({})",
-                sensitivity(*case_insensitive)
+            i18n::text_with(
+                "query contains key {key} ({sensitivity})",
+                &[
+                    ("{key}", &format!("{key:?}")),
+                    ("{sensitivity}", &sensitivity(*case_insensitive)),
+                ],
             ),
         ),
         UrlCondition::QueryValue {
@@ -657,9 +680,13 @@ fn describe_condition(condition: &UrlCondition) -> String {
             negate,
         } => described(
             *negate,
-            format!(
-                "query contains {key:?}={value:?} ({})",
-                sensitivity(*case_insensitive)
+            i18n::text_with(
+                "query contains {key}={value} ({sensitivity})",
+                &[
+                    ("{key}", &format!("{key:?}")),
+                    ("{value}", &format!("{value:?}")),
+                    ("{sensitivity}", &sensitivity(*case_insensitive)),
+                ],
             ),
         ),
         UrlCondition::Glob {
@@ -668,9 +695,12 @@ fn describe_condition(condition: &UrlCondition) -> String {
             negate,
         } => described(
             *negate,
-            format!(
-                "glob {value:?} matches the Matching URL ({})",
-                sensitivity(*case_insensitive)
+            i18n::text_with(
+                "glob {value} matches the Matching URL ({sensitivity})",
+                &[
+                    ("{value}", &format!("{value:?}")),
+                    ("{sensitivity}", &sensitivity(*case_insensitive)),
+                ],
             ),
         ),
         UrlCondition::Regex {
@@ -679,9 +709,12 @@ fn describe_condition(condition: &UrlCondition) -> String {
             negate,
         } => described(
             *negate,
-            format!(
-                "regular expression {value:?} matches the Matching URL ({})",
-                sensitivity(*case_insensitive)
+            i18n::text_with(
+                "regular expression {value} matches the Matching URL ({sensitivity})",
+                &[
+                    ("{value}", &format!("{value:?}")),
+                    ("{sensitivity}", &sensitivity(*case_insensitive)),
+                ],
             ),
         ),
     }
@@ -689,26 +722,39 @@ fn describe_condition(condition: &UrlCondition) -> String {
 
 fn described(negate: bool, description: String) -> String {
     if negate {
-        format!("NOT ({description})")
+        i18n::text_with("NOT ({description})", &[("{description}", &description)])
     } else {
         description
     }
 }
 
-fn sensitivity(case_insensitive: bool) -> &'static str {
+fn sensitivity(case_insensitive: bool) -> String {
     if case_insensitive {
-        "case-insensitive"
+        i18n::text("case-insensitive")
     } else {
-        "case-sensitive"
+        i18n::text("case-sensitive")
     }
 }
 
 fn describe_action(action: &RoutingAction) -> String {
     let (kind, destination, mode) = match action {
-        RoutingAction::Open { destination, mode } => ("open", destination, mode),
-        RoutingAction::Preselect { destination, mode } => ("preselect", destination, mode),
+        RoutingAction::Open { destination, mode } => (i18n::text("open"), destination, mode),
+        RoutingAction::Preselect { destination, mode } => {
+            (i18n::text("preselect"), destination, mode)
+        }
     };
-    format!("{kind} {destination} in {mode:?} Launch Mode")
+    let mode = match mode {
+        LaunchMode::Normal => i18n::text("Normal"),
+        LaunchMode::Private => i18n::text("Private"),
+    };
+    i18n::text_with(
+        "{kind} {destination} in {mode} Launch Mode",
+        &[
+            ("{kind}", &kind),
+            ("{destination}", destination),
+            ("{mode}", &mode),
+        ],
+    )
 }
 
 #[cfg(test)]

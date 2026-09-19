@@ -702,3 +702,229 @@ msgstr "Desktop defaults"
 
 msgid "Desktop default association instructions"
 msgstr "Desktop default association instructions"
+
+msgid "Migrate"
+msgstr "Migrate"
+
+msgid "Configuration could not be used"
+msgstr "Configuration could not be used"
+
+msgid ""
+"Retry after setting HOME or an absolute XDG_CONFIG_HOME. Close this window to keep waiting Open Targets queued. Automatic routing stays disabled until configuration can be loaded."
+msgstr ""
+"Retry after setting HOME or an absolute XDG_CONFIG_HOME. Close this window to keep waiting Open Targets queued. Automatic routing stays disabled until configuration can be loaded."
+
+msgid "_Retry"
+msgstr "_Retry"
+
+msgid "Retry"
+msgstr "Retry"
+
+msgid "Open Target title"
+msgstr "Open Target title"
+
+msgid "Pending Request count"
+msgstr "Pending Request count"
+
+msgid "Full Open Target details"
+msgstr "Full Open Target details"
+
+msgid "Repair configuration"
+msgstr "Repair configuration"
+
+msgid "Filter Browser Destinations"
+msgstr "Filter Browser Destinations"
+
+msgid "Browser Destinations"
+msgstr "Browser Destinations"
+
+msgid "Repair Browser Destination"
+msgstr "Repair Browser Destination"
+
+msgid "Private Launch Mode"
+msgstr "Private Launch Mode"
+
+msgid "Clear destination filter"
+msgstr "Clear destination filter"
+
+msgid "Configuration was saved, but the directory could not be flushed"
+msgstr "Configuration was saved, but the directory could not be flushed"
+
+msgid "Configuration was saved, but older backups could not be pruned"
+msgstr "Configuration was saved, but older backups could not be pruned"
+
+msgid "Configuration must be a regular file"
+msgstr "Configuration must be a regular file"
+
+msgid "Configuration is not owned by the current user"
+msgstr "Configuration is not owned by the current user"
+
+msgid "Configuration symlink is broken"
+msgstr "Configuration symlink is broken"
+
+msgid "Reveals credentials, path, query, and fragment"
+msgstr "Reveals credentials, path, query, and fragment"
+
+msgid "Drag to reorder"
+msgstr "Drag to reorder"
+
+msgid "normal"
+msgstr "normal"
+
+msgid "private"
+msgstr "private"
+
+msgid "Fallback: open {destination} in {mode} Launch Mode"
+msgstr "Fallback: open {destination} in {mode} Launch Mode"
+
+msgid "Fallback: show Picker"
+msgstr "Fallback: show Picker"
+
+msgid "scheme is {value}"
+msgstr "scheme is {value}"
+
+msgid "host is {value} or a label-boundary subdomain"
+msgstr "host is {value} or a label-boundary subdomain"
+
+msgid "host is exactly {value}"
+msgstr "host is exactly {value}"
+
+msgid "explicit non-default port is {value}"
+msgstr "explicit non-default port is {value}"
+
+msgid "path {comparison} {value} ({sensitivity})"
+msgstr "path {comparison} {value} ({sensitivity})"
+
+msgid "equals"
+msgstr "equals"
+
+msgid "starts with"
+msgstr "starts with"
+
+msgid "query contains key {key} ({sensitivity})"
+msgstr "query contains key {key} ({sensitivity})"
+
+msgid "query contains {key}={value} ({sensitivity})"
+msgstr "query contains {key}={value} ({sensitivity})"
+
+msgid "glob {value} matches the Matching URL ({sensitivity})"
+msgstr "glob {value} matches the Matching URL ({sensitivity})"
+
+msgid "regular expression {value} matches the Matching URL ({sensitivity})"
+msgstr "regular expression {value} matches the Matching URL ({sensitivity})"
+
+msgid "NOT ({description})"
+msgstr "NOT ({description})"
+
+msgid "case-insensitive"
+msgstr "case-insensitive"
+
+msgid "case-sensitive"
+msgstr "case-sensitive"
+
+msgid "open"
+msgstr "open"
+
+msgid "preselect"
+msgstr "preselect"
+
+msgid "{kind} {destination} in {mode} Launch Mode"
+msgstr "{kind} {destination} in {mode} Launch Mode"
+
+msgid "Ordered Routing Rules"
+msgstr "Ordered Routing Rules"
+
+msgid "Move Routing Rule up"
+msgstr "Move Routing Rule up"
+
+msgid "Move Routing Rule down"
+msgstr "Move Routing Rule down"
+
+msgid "Routing Rule explanation"
+msgstr "Routing Rule explanation"
+
+msgid "disabled"
+msgstr "disabled"
+
+msgid "FIRST WINNER"
+msgstr "FIRST WINNER"
+
+msgid "matched after winner"
+msgstr "matched after winner"
+
+msgid "did not match"
+msgstr "did not match"
+
+msgid "{name} ({id}): {state}"
+msgstr "{name} ({id}): {state}"
+
+msgid "matched"
+msgstr "matched"
+
+msgid "  OR group {number}: {state}"
+msgstr "  OR group {number}: {state}"
+
+msgid "PASS"
+msgstr "PASS"
+
+msgid "FAIL"
+msgstr "FAIL"
+
+msgid "    {result} — {description}"
+msgstr "    {result} — {description}"
+
+msgid "First winner: {winner}"
+msgstr "First winner: {winner}"
+
+msgid "First winner: none"
+msgstr "First winner: none"
+
+msgid "Resulting action: {action}"
+msgstr "Resulting action: {action}"
+
+msgid "Routing Rule action"
+msgstr "Routing Rule action"
+
+msgid "Action Browser Destination ID"
+msgstr "Action Browser Destination ID"
+
+msgid "Action Launch Mode"
+msgstr "Action Launch Mode"
+
+msgid "Reorder {name}"
+msgstr "Reorder {name}"
+
+msgid "Add OR condition group"
+msgstr "Add OR condition group"
+
+msgid "URL Condition type"
+msgstr "URL Condition type"
+
+msgid ""
+"The invalid or unusable configuration path was left unchanged. Retry after repairing ownership, permissions, or the symlink, or enable destinations and save to replace a readable invalid file. Independently discovered browsers are listed below."
+msgstr ""
+"The invalid or unusable configuration path was left unchanged. Retry after repairing ownership, permissions, or the symlink, or enable destinations and save to replace a readable invalid file. Independently discovered browsers are listed below."
+
+msgid "Waiting Open Target"
+msgstr "Waiting Open Target"
+
+msgid "Browser Candidates"
+msgstr "Browser Candidates"
+
+msgid "Move destination up"
+msgstr "Move destination up"
+
+msgid "Move destination down"
+msgstr "Move destination down"
+
+msgid "Browser Picker configuration error"
+msgstr "Browser Picker configuration error"
+
+msgid "Picker"
+msgstr "Picker"
+
+msgid "Configuration"
+msgstr "Configuration"
+
+msgid "Configuration migration"
+msgstr "Configuration migration"

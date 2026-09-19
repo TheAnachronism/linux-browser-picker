@@ -105,19 +105,21 @@ pub(crate) fn is_config_operation(argument: Option<&str>) -> bool {
     matches!(argument, Some("config" | "--config"))
 }
 
-fn environment_failure(message: &str) -> gtk::glib::ExitCode {
-    eprintln!("{}", i18n::text(message));
+fn environment_failure(message: String) -> gtk::glib::ExitCode {
+    eprintln!("{message}");
     gtk::glib::ExitCode::from(STATUS_ENVIRONMENT)
 }
 
 fn open_configuration() -> gtk::glib::ExitCode {
     if !has_graphical_session() {
-        return environment_failure("Opening configuration requires a graphical session");
+        return environment_failure(i18n::text(
+            "Opening configuration requires a graphical session",
+        ));
     }
     if !has_session_bus() {
-        return environment_failure(
+        return environment_failure(i18n::text(
             "Picker, configuration, and shared queue operations require a user session D-Bus",
-        );
+        ));
     }
     application::run()
 }
@@ -177,7 +179,9 @@ fn validate_configuration() -> gtk::glib::ExitCode {
 
 fn route_arguments() -> gtk::glib::ExitCode {
     if !has_graphical_session() {
-        return environment_failure("Routing an Open Target requires a graphical session");
+        return environment_failure(i18n::text(
+            "Routing an Open Target requires a graphical session",
+        ));
     }
     if has_session_bus() {
         return application::run();
@@ -187,9 +191,9 @@ fn route_arguments() -> gtk::glib::ExitCode {
         return open_configuration();
     };
     if arguments.next().is_some() {
-        return environment_failure(
+        return environment_failure(i18n::text(
             "Picker, configuration, and shared queue operations require a user session D-Bus",
-        );
+        ));
     }
     route_one_shot(&argument)
 }
@@ -203,9 +207,9 @@ fn route_one_shot(argument: &OsStr) -> gtk::glib::ExitCode {
             | routing::Outcome::Setup { .. }
             | routing::Outcome::Recover { .. }
             | routing::Outcome::Migrate { .. },
-        ) => environment_failure(
+        ) => environment_failure(i18n::text(
             "Picker, configuration, and shared queue operations require a user session D-Bus",
-        ),
+        )),
         Err(error) => {
             let (message, status) = routing_error_message(error);
             eprintln!("{message}");

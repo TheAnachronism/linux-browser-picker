@@ -36,6 +36,8 @@ runCommand "browser-picker-release-proof"
     ];
     BROWSER_PICKER = "${browser-picker}/bin/browser-picker";
     A11Y_INSPECT = ./a11y_inspect.py;
+    I18N_COVERAGE = ./i18n_coverage.py;
+    SRC_DIR = ../src;
     PO_FILE = ../po/en.po;
     CHECKLIST = ../docs/release-verification.md;
     DBUS_SESSION_CONF = "${dbus}/share/dbus-1/session.conf";
@@ -52,7 +54,7 @@ runCommand "browser-picker-release-proof"
     export XDG_CACHE_HOME="$TMPDIR/xdg-cache"
     export XDG_CONFIG_HOME="$TMPDIR/xdg-config"
     export XDG_DATA_DIRS="${browser-picker}/share''${XDG_DATA_DIRS:+:$XDG_DATA_DIRS}"
-    export BROWSER_PICKER A11Y_INSPECT PO_FILE CHECKLIST AT_SPI_LAUNCHER AT_SPI_REGISTRY
+    export BROWSER_PICKER A11Y_INSPECT I18N_COVERAGE SRC_DIR PO_FILE CHECKLIST AT_SPI_LAUNCHER AT_SPI_REGISTRY
     dbus-run-session --config-file="$DBUS_SESSION_CONF" -- \
       xvfb-run -a -s '-screen 0 1920x1080x24' \
       bash ${./release-proof.sh}

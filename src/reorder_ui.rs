@@ -3,6 +3,7 @@ use std::rc::Rc;
 use gtk::gdk;
 use gtk::prelude::*;
 
+use crate::i18n;
 use crate::list_order;
 
 const DRAG_THRESHOLD: f64 = 12.0;
@@ -15,7 +16,7 @@ pub fn prepend_handle(header: &gtk::Box, name: &str) -> gtk::Widget {
     handle.set_tooltip_text(Some(name));
     handle.update_property(&[
         gtk::accessible::Property::Label(name),
-        gtk::accessible::Property::Description("Drag to reorder"),
+        gtk::accessible::Property::Description(&i18n::text("Drag to reorder")),
     ]);
     let icon = gtk::Image::from_icon_name("list-drag-handle-symbolic");
     icon.set_pixel_size(16);

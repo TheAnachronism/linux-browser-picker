@@ -1,23 +1,12 @@
 #!/usr/bin/env bash
 set -eu
 
-python3 - "$PO_FILE" "$CHECKLIST" <<'PY'
+python3 "$I18N_COVERAGE" "$SRC_DIR" "$PO_FILE"
+python3 - "$CHECKLIST" <<'PY'
 from pathlib import Path
-import re
 import sys
 
-po = Path(sys.argv[1]).read_text()
-if re.search(r"\b(TODO|FIXME|TBD|WIP)\b", po):
-    raise SystemExit("translation catalog contains placeholder copy")
-for needle in ("lorem ipsum", "coming soon", "unfinished"):
-    if needle in po.lower():
-        raise SystemExit(f"translation catalog contains placeholder copy: {needle}")
-if po.count("msgid ") < 20:
-    raise SystemExit("English catalog looks incomplete")
-if re.search(r'^msgstr ""\n\n', po, flags=re.M):
-    raise SystemExit("English catalog has an empty translation")
-
-checklist = Path(sys.argv[2]).read_text()
+checklist = Path(sys.argv[1]).read_text()
 for heading in (
     "Automated coverage",
     "Manual accessibility and desktop checklist",
@@ -28,7 +17,7 @@ for heading in (
 ):
     if heading not in checklist:
         raise SystemExit(f"release checklist missing {heading!r}")
-print("English catalog and release checklist are complete")
+print("release checklist is complete")
 PY
 
 mkdir -p "$HOME" "$XDG_RUNTIME_DIR" "$XDG_DATA_HOME/applications" \

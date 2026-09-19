@@ -43,21 +43,21 @@ impl ConditionKind {
         Self::Regex,
     ];
 
-    fn label(self) -> &'static str {
+    fn label(self) -> String {
         match self {
-            Self::Scheme => "Scheme",
-            Self::Host => "Host",
-            Self::Port => "Port",
-            Self::ExactPath => "Exact path",
-            Self::PathPrefix => "Path prefix",
-            Self::QueryKey => "Query key",
-            Self::QueryValue => "Query value",
-            Self::Glob => "Glob",
-            Self::Regex => "Regular expression",
+            Self::Scheme => i18n::text("Scheme"),
+            Self::Host => i18n::text("Host"),
+            Self::Port => i18n::text("Port"),
+            Self::ExactPath => i18n::text("Exact path"),
+            Self::PathPrefix => i18n::text("Path prefix"),
+            Self::QueryKey => i18n::text("Query key"),
+            Self::QueryValue => i18n::text("Query value"),
+            Self::Glob => i18n::text("Glob"),
+            Self::Regex => i18n::text("Regular expression"),
         }
     }
 
-    fn labels() -> [&'static str; 9] {
+    fn labels() -> [String; 9] {
         Self::ALL.map(Self::label)
     }
 
@@ -177,7 +177,9 @@ impl RoutingRuleEditor {
         let list = gtk::ListBox::new();
         list.set_selection_mode(gtk::SelectionMode::Single);
         list.add_css_class("boxed-list");
-        list.update_property(&[gtk::accessible::Property::Label("Ordered Routing Rules")]);
+        list.update_property(&[gtk::accessible::Property::Label(&i18n::text(
+            "Ordered Routing Rules",
+        ))]);
         let rules = Rc::new(RefCell::new(Vec::new()));
         for rule in existing {
             let widgets = build_rule(rule.clone(), &on_change);
@@ -219,19 +221,23 @@ impl RoutingRuleEditor {
 
         let controls = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         let add = gtk::Button::with_label(&i18n::text("Add Routing Rule"));
-        add.update_property(&[gtk::accessible::Property::Label("Add Routing Rule")]);
+        add.update_property(&[gtk::accessible::Property::Label(&i18n::text(
+            "Add Routing Rule",
+        ))]);
         let up = gtk::Button::from_icon_name("go-up-symbolic");
         up.update_property(&[
-            gtk::accessible::Property::Label("Move Routing Rule up"),
+            gtk::accessible::Property::Label(&i18n::text("Move Routing Rule up")),
             gtk::accessible::Property::KeyShortcuts("<Alt>Up"),
         ]);
         let down = gtk::Button::from_icon_name("go-down-symbolic");
         down.update_property(&[
-            gtk::accessible::Property::Label("Move Routing Rule down"),
+            gtk::accessible::Property::Label(&i18n::text("Move Routing Rule down")),
             gtk::accessible::Property::KeyShortcuts("<Alt>Down"),
         ]);
         let remove = gtk::Button::with_label(&i18n::text("Remove Routing Rule"));
-        remove.update_property(&[gtk::accessible::Property::Label("Remove Routing Rule")]);
+        remove.update_property(&[gtk::accessible::Property::Label(&i18n::text(
+            "Remove Routing Rule",
+        ))]);
         controls.append(&add);
         controls.append(&up);
         controls.append(&down);
@@ -331,7 +337,9 @@ impl RoutingRuleEditor {
             .text(target.map(OpenTarget::as_str).unwrap_or_default())
             .placeholder_text(i18n::text("Matching URL to test"))
             .build();
-        sample.update_property(&[gtk::accessible::Property::Label("Matching URL to test")]);
+        sample.update_property(&[gtk::accessible::Property::Label(&i18n::text(
+            "Matching URL to test",
+        ))]);
         root.append(&sample);
         let test = gtk::Button::with_label(&i18n::text("Test Rules"));
         root.append(&test);
@@ -348,8 +356,9 @@ impl RoutingRuleEditor {
             .wrap(true)
             .selectable(true)
             .build();
-        explanation
-            .update_property(&[gtk::accessible::Property::Label("Routing Rule explanation")]);
+        explanation.update_property(&[gtk::accessible::Property::Label(&i18n::text(
+            "Routing Rule explanation",
+        ))]);
         root.append(&explanation);
 
         Self {
@@ -423,42 +432,65 @@ pub fn file_explanation() -> String {
 }
 
 pub fn explanation_text(evaluation: &RoutingEvaluation) -> String {
-    let mut lines = vec![format!("Matching URL: {}", evaluation.matching_url)];
+    let mut lines = vec![i18n::text_with(
+        "Matching URL: {url}",
+        &[("{url}", &evaluation.matching_url)],
+    )];
     for rule in &evaluation.rules {
         let state = if !rule.enabled {
-            "disabled"
+            i18n::text("disabled")
         } else if rule.won {
-            "FIRST WINNER"
+            i18n::text("FIRST WINNER")
         } else if rule.matched {
-            "matched after winner"
+            i18n::text("matched after winner")
         } else {
-            "did not match"
+            i18n::text("did not match")
         };
-        lines.push(format!("{} ({}): {state}", rule.name, rule.id));
+        lines.push(i18n::text_with(
+            "{name} ({id}): {state}",
+            &[
+                ("{name}", &rule.name),
+                ("{id}", &rule.id),
+                ("{state}", &state),
+            ],
+        ));
         for (group_index, group) in rule.groups.iter().enumerate() {
-            lines.push(format!(
-                "  OR group {}: {}",
-                group_index + 1,
-                if group.matched {
-                    "matched"
-                } else {
-                    "did not match"
-                }
+            let group_state = if group.matched {
+                i18n::text("matched")
+            } else {
+                i18n::text("did not match")
+            };
+            lines.push(i18n::text_with(
+                "  OR group {number}: {state}",
+                &[
+                    ("{number}", &(group_index + 1).to_string()),
+                    ("{state}", &group_state),
+                ],
             ));
             for condition in &group.conditions {
-                lines.push(format!(
-                    "    {} — {}",
-                    if condition.matched { "PASS" } else { "FAIL" },
-                    condition.description
+                let result = if condition.matched {
+                    i18n::text("PASS")
+                } else {
+                    i18n::text("FAIL")
+                };
+                lines.push(i18n::text_with(
+                    "    {result} — {description}",
+                    &[
+                        ("{result}", &result),
+                        ("{description}", &condition.description),
+                    ],
                 ));
             }
         }
     }
     lines.push(match evaluation.winner.as_deref() {
-        Some(winner) => format!("First winner: {winner}"),
-        None => "First winner: none".to_owned(),
+        Some(winner) => i18n::text_with("First winner: {winner}", &[("{winner}", winner)]),
+        None => i18n::text("First winner: none"),
     });
-    lines.push(format!("Resulting action: {}", evaluation.action));
+    lines.push(i18n::text_with(
+        "Resulting action: {action}",
+        &[("{action}", &evaluation.action)],
+    ));
     lines.join("\n")
 }
 
@@ -466,11 +498,13 @@ fn build_rule(rule: RoutingRule, on_change: &ChangeCallback) -> RuleWidgets {
     let enabled = gtk::CheckButton::with_label(&i18n::text("Enabled"));
     enabled.set_active(rule.enabled);
     bind_toggle(&enabled, on_change);
-    let id = entry(&rule.id, "Routing Rule ID", on_change);
-    let name = entry(&rule.name, "Routing Rule name", on_change);
+    let id = entry(&rule.id, &i18n::text("Routing Rule ID"), on_change);
+    let name = entry(&rule.name, &i18n::text("Routing Rule name"), on_change);
+    let open_automatically = i18n::text("Open automatically");
+    let preselect_in_picker = i18n::text("Preselect in Picker");
     let action = dropdown(
-        &["Open automatically", "Preselect in Picker"],
-        "Routing Rule action",
+        &[&open_automatically, &preselect_in_picker],
+        &i18n::text("Routing Rule action"),
         on_change,
     );
     let (action_index, destination_id, launch_mode) = match rule.action {
@@ -478,8 +512,18 @@ fn build_rule(rule: RoutingRule, on_change: &ChangeCallback) -> RuleWidgets {
         RoutingAction::Preselect { destination, mode } => (1, destination, mode),
     };
     action.set_selected(action_index);
-    let destination = entry(&destination_id, "Action Browser Destination ID", on_change);
-    let mode = dropdown(&["Normal", "Private"], "Action Launch Mode", on_change);
+    let destination = entry(
+        &destination_id,
+        &i18n::text("Action Browser Destination ID"),
+        on_change,
+    );
+    let normal = i18n::text("Normal");
+    let private = i18n::text("Private");
+    let mode = dropdown(
+        &[&normal, &private],
+        &i18n::text("Action Launch Mode"),
+        on_change,
+    );
     mode.set_selected(if launch_mode == LaunchMode::Private {
         1
     } else {
@@ -487,7 +531,10 @@ fn build_rule(rule: RoutingRule, on_change: &ChangeCallback) -> RuleWidgets {
     });
 
     let header = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    let drag_handle = reorder_ui::prepend_handle(&header, &format!("Reorder {}", rule.name));
+    let drag_handle = reorder_ui::prepend_handle(
+        &header,
+        &i18n::text_with("Reorder {name}", &[("{name}", &rule.name)]),
+    );
     header.append(&enabled);
     header.append(&id);
     header.append(&name);
@@ -498,7 +545,9 @@ fn build_rule(rule: RoutingRule, on_change: &ChangeCallback) -> RuleWidgets {
     let groups_box = gtk::Box::new(gtk::Orientation::Vertical, 6);
     let groups = Rc::new(RefCell::new(Vec::new()));
     let add_group = gtk::Button::with_label(&i18n::text("Add OR group"));
-    add_group.update_property(&[gtk::accessible::Property::Label("Add OR condition group")]);
+    add_group.update_property(&[gtk::accessible::Property::Label(&i18n::text(
+        "Add OR condition group",
+    ))]);
     let group_ctx = GroupEditorContext {
         on_change: on_change.clone(),
         groups: groups.clone(),
@@ -597,7 +646,9 @@ fn build_group(group: ConditionGroup, ctx: &GroupEditorContext) -> GroupWidgets 
         }
     ));
     let remove = gtk::Button::with_label(&i18n::text("Remove OR group"));
-    remove.update_property(&[gtk::accessible::Property::Label("Remove OR group")]);
+    remove.update_property(&[gtk::accessible::Property::Label(&i18n::text(
+        "Remove OR group",
+    ))]);
     let ctx = ctx.clone();
     remove.connect_clicked(glib::clone!(
         #[weak]
@@ -625,7 +676,8 @@ fn build_group(group: ConditionGroup, ctx: &GroupEditorContext) -> GroupWidgets 
 fn build_condition(condition: UrlCondition, ctx: &ConditionEditorContext) -> ConditionWidgets {
     let on_change = &ctx.on_change;
     let labels = ConditionKind::labels();
-    let kind = dropdown(&labels, "URL Condition type", on_change);
+    let labels: Vec<_> = labels.iter().map(String::as_str).collect();
+    let kind = dropdown(&labels, &i18n::text("URL Condition type"), on_change);
     let (key_text, value_text, option_active, insensitive_active, negate_active) = match &condition
     {
         UrlCondition::Scheme { value, negate } => {
@@ -698,8 +750,8 @@ fn build_condition(condition: UrlCondition, ctx: &ConditionEditorContext) -> Con
         ),
     };
     kind.set_selected(ConditionKind::from_condition(&condition) as u32);
-    let key = entry(&key_text, "URL Condition query key", on_change);
-    let value = entry(&value_text, "URL Condition value", on_change);
+    let key = entry(&key_text, &i18n::text("URL Condition query key"), on_change);
+    let value = entry(&value_text, &i18n::text("URL Condition value"), on_change);
     let option = gtk::CheckButton::with_label(&i18n::text("Include subdomains"));
     option.set_active(option_active);
     let insensitive = gtk::CheckButton::with_label(&i18n::text("Ignore case"));
@@ -717,7 +769,9 @@ fn build_condition(condition: UrlCondition, ctx: &ConditionEditorContext) -> Con
     row.append(&insensitive);
     row.append(&negate);
     let remove = gtk::Button::with_label(&i18n::text("Remove AND condition"));
-    remove.update_property(&[gtk::accessible::Property::Label("Remove AND condition")]);
+    remove.update_property(&[gtk::accessible::Property::Label(&i18n::text(
+        "Remove AND condition",
+    ))]);
     let ctx = ctx.clone();
     remove.connect_clicked(glib::clone!(
         #[weak]
@@ -908,7 +962,7 @@ fn bind_toggle(button: &gtk::CheckButton, on_change: &ChangeCallback) {
 fn entry(text: &str, label: &str, on_change: &ChangeCallback) -> gtk::Entry {
     let entry = gtk::Entry::builder()
         .text(text)
-        .placeholder_text(i18n::text(label))
+        .placeholder_text(label)
         .build();
     entry.update_property(&[gtk::accessible::Property::Label(label)]);
     entry.connect_changed(glib::clone!(
@@ -920,9 +974,7 @@ fn entry(text: &str, label: &str, on_change: &ChangeCallback) -> gtk::Entry {
 }
 
 fn dropdown(values: &[&str], label: &str, on_change: &ChangeCallback) -> gtk::DropDown {
-    let localized: Vec<_> = values.iter().map(|value| i18n::text(value)).collect();
-    let localized: Vec<_> = localized.iter().map(String::as_str).collect();
-    let dropdown = gtk::DropDown::from_strings(&localized);
+    let dropdown = gtk::DropDown::from_strings(values);
     dropdown.update_property(&[gtk::accessible::Property::Label(label)]);
     dropdown.connect_selected_notify(glib::clone!(
         #[strong]
