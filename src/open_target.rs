@@ -70,15 +70,25 @@ impl OpenTarget {
         if original.len() > MAX_SERIALIZED_BYTES {
             return Err(Error::TooLarge);
         }
-        if original.contains("://") {
-            let parsed = url::Url::parse(original).map_err(|_| Error::Malformed)?;
-            return match parsed.scheme() {
-                "http" | "https" => WebTarget::parse(argument).map(Self::Web),
-                "file" => FileTarget::from_url(&parsed).map(Self::File),
-                _ => Err(Error::UnsupportedScheme),
-            };
+        match leading_scheme(original) {
+            Some(scheme)
+                if scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https") =>
+            {
+                WebTarget::parse(argument).map(Self::Web)
+            }
+            Some(scheme) if scheme.eq_ignore_ascii_case("file") => {
+                let parsed = url::Url::parse(original).map_err(|_| Error::Malformed)?;
+                FileTarget::from_url(&parsed).map(Self::File)
+            }
+            Some(scheme)
+                if original
+                    .get(scheme.len()..)
+                    .is_some_and(|rest| rest.starts_with("://")) =>
+            {
+                Err(Error::UnsupportedScheme)
+            }
+            Some(_) | None => FileTarget::from_path(Path::new(original)).map(Self::File),
         }
-        FileTarget::from_path(Path::new(original)).map(Self::File)
     }
 
     pub fn as_str(&self) -> &str {
@@ -297,6 +307,22 @@ impl WebTarget {
     }
 }
 
+fn leading_scheme(input: &str) -> Option<&str> {
+    let bytes = input.as_bytes();
+    if !bytes.first().is_some_and(u8::is_ascii_alphabetic) {
+        return None;
+    }
+    let mut end = 1;
+    while end < bytes.len() {
+        match bytes[end] {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'+' | b'-' | b'.' => end += 1,
+            b':' => return Some(&input[..end]),
+            _ => return None,
+        }
+    }
+    None
+}
+
 fn host_forms(target: &WebTarget) -> String {
     if target.unicode_host() == target.ascii_host() {
         i18n::text_with("Host: {host}", &[("{host}", target.ascii_host())])
@@ -343,5 +369,105 @@ fn validate_regular_file(path: &Path) -> Result<(), Error> {
         Ok(())
     } else {
         Err(Error::NotRegular)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    use tempfile::TempDir;
+
+    #[test]
+    fn existing_local_path_containing_scheme_separator_remains_a_path() {
+        let home = TempDir::new().expect("temporary home should be created");
+        fs::create_dir(home.path().join("notes:")).expect("colon directory should be writable");
+        let argument = home.path().join("notes://draft.txt");
+        fs::write(&argument, b"not a URL").expect("fixture file should be writable");
+
+        let target = match OpenTarget::parse(argument.as_os_str()) {
+            Ok(target) => target,
+            Err(error) => panic!("{}", error.message()),
+        };
+
+        match target {
+            OpenTarget::File(file) => {
+                assert_eq!(
+                    Path::new(file.path()),
+                    home.path().join("notes:").join("draft.txt")
+                );
+            }
+            OpenTarget::Web(_) => panic!("a local path containing :// must remain a path"),
+        }
+    }
+
+    #[test]
+    fn relative_filename_with_colon_is_classified_as_a_path() {
+        match OpenTarget::parse(std::ffi::OsStr::new("video:1.mp4")) {
+            Ok(OpenTarget::File(_)) | Err(Error::Missing | Error::NotRegular) => {}
+            Ok(OpenTarget::Web(_)) => panic!("a relative filename with a colon must remain a path"),
+            Err(error) => panic!("{}", error.message()),
+        }
+    }
+
+    #[test]
+    fn empty_authority_file_uri_is_accepted() {
+        let home = TempDir::new().expect("temporary home should be created");
+        let path = home.path().join("page.html");
+        fs::write(&path, "<html></html>").expect("fixture file should be writable");
+        let uri = format!("file:{}", path.display());
+
+        let target = match OpenTarget::parse(std::ffi::OsStr::new(&uri)) {
+            Ok(target) => target,
+            Err(error) => panic!("{}", error.message()),
+        };
+
+        match target {
+            OpenTarget::File(file) => {
+                assert_eq!(Path::new(file.path()), path.as_path());
+            }
+            OpenTarget::Web(_) => panic!("file:/path must be a local file Open Target"),
+        }
+    }
+
+    #[test]
+    fn regular_non_html_file_is_accepted_without_reading_contents() {
+        let home = TempDir::new().expect("temporary home should be created");
+        let path = home.path().join("notes.bin");
+        fs::write(&path, b"\x00\xffnot-html").expect("binary fixture should be writable");
+
+        let target = match OpenTarget::parse(path.as_os_str()) {
+            Ok(target) => target,
+            Err(error) => panic!("{}", error.message()),
+        };
+
+        assert!(matches!(target, OpenTarget::File(_)));
+    }
+
+    #[test]
+    fn remote_file_authority_is_rejected() {
+        assert!(matches!(
+            OpenTarget::parse(std::ffi::OsStr::new("file://example.com/tmp/page.html")),
+            Err(Error::RemoteFile)
+        ));
+    }
+
+    #[test]
+    fn matching_url_lowercases_scheme_and_host_but_preserves_path_query_and_fragment_spelling() {
+        let target = match OpenTarget::parse(std::ffi::OsStr::new(
+            "HTTPS://BÜCHER.example:443/Café/Path?Q=A%2FB&q=second#Frag",
+        )) {
+            Ok(OpenTarget::Web(target)) => target,
+            Ok(OpenTarget::File(_)) => panic!("HTTPS URL must remain a web Open Target"),
+            Err(error) => panic!("{}", error.message()),
+        };
+
+        assert_eq!(
+            target.matching_url(),
+            "https://xn--bcher-kva.example/Café/Path?Q=A%2FB&q=second#Frag"
+        );
+        assert_eq!(target.path(), "/Café/Path");
+        assert_eq!(target.query(), Some("Q=A%2FB&q=second"));
     }
 }

@@ -591,15 +591,15 @@ fn text_matches(
     match comparison {
         PathComparison::Exact => text_equal(candidate, expected, case_insensitive),
         PathComparison::Prefix if case_insensitive => candidate
-            .get(..expected.len())
-            .is_some_and(|prefix| prefix.eq_ignore_ascii_case(expected)),
+            .to_lowercase()
+            .starts_with(&expected.to_lowercase()),
         PathComparison::Prefix => candidate.starts_with(expected),
     }
 }
 
 fn text_equal(candidate: &str, expected: &str, case_insensitive: bool) -> bool {
     if case_insensitive {
-        candidate.eq_ignore_ascii_case(expected)
+        candidate.to_lowercase() == expected.to_lowercase()
     } else {
         candidate == expected
     }
@@ -709,4 +709,111 @@ fn describe_action(action: &RoutingAction) -> String {
         RoutingAction::Preselect { destination, mode } => ("preselect", destination, mode),
     };
     format!("{kind} {destination} in {mode:?} Launch Mode")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::OsStr;
+
+    use crate::configuration::{
+        ConditionGroup, Configuration, FallbackAction, LaunchMode, PathComparison, RoutingAction,
+        RoutingRule, UrlCondition,
+    };
+
+    fn parse_web(url: &str) -> WebTarget {
+        match OpenTarget::parse(OsStr::new(url)) {
+            Ok(OpenTarget::Web(target)) => target,
+            Ok(OpenTarget::File(_)) => panic!("expected a web Open Target"),
+            Err(error) => panic!("{}", error.message()),
+        }
+    }
+
+    fn configuration_with(condition: UrlCondition) -> Configuration {
+        Configuration {
+            destinations: Vec::new(),
+            rules: vec![RoutingRule {
+                id: "match".to_owned(),
+                name: "Match".to_owned(),
+                enabled: true,
+                groups: vec![ConditionGroup {
+                    conditions: vec![condition],
+                }],
+                action: RoutingAction::Open {
+                    destination: "controlled".to_owned(),
+                    mode: LaunchMode::Normal,
+                },
+            }],
+            fallback: FallbackAction::ShowPicker,
+        }
+    }
+
+    fn wins(url: &str, condition: UrlCondition) -> bool {
+        evaluate(&configuration_with(condition), &parse_web(url))
+            .winner
+            .as_deref()
+            == Some("match")
+    }
+
+    #[test]
+    fn unicode_case_insensitive_path_matches_without_byte_slicing() {
+        assert!(wins(
+            "https://example.com/Café/Page",
+            UrlCondition::Path {
+                value: "/CAFÉ".to_owned(),
+                comparison: PathComparison::Prefix,
+                case_insensitive: true,
+                negate: false,
+            },
+        ));
+        assert!(wins(
+            "https://example.com/İstanbul/docs",
+            UrlCondition::Path {
+                value: "/i".to_owned(),
+                comparison: PathComparison::Prefix,
+                case_insensitive: true,
+                negate: false,
+            },
+        ));
+        assert!(!wins(
+            "https://example.com/Café/Page",
+            UrlCondition::Path {
+                value: "/CAFÉ".to_owned(),
+                comparison: PathComparison::Prefix,
+                case_insensitive: false,
+                negate: false,
+            },
+        ));
+        assert!(!wins(
+            "https://example.com/Caf%C3%A9/Page",
+            UrlCondition::Path {
+                value: "/CAFÉ".to_owned(),
+                comparison: PathComparison::Prefix,
+                case_insensitive: true,
+                negate: false,
+            },
+        ));
+    }
+
+    #[test]
+    fn unicode_case_insensitive_query_matches_encoded_spelling() {
+        assert!(wins(
+            "https://example.com/path?Q=Café",
+            UrlCondition::QueryValue {
+                key: "q".to_owned(),
+                value: "CAFÉ".to_owned(),
+                case_insensitive: true,
+                negate: false,
+            },
+        ));
+        assert!(!wins(
+            "https://example.com/path?Q=Caf%C3%A9",
+            UrlCondition::QueryValue {
+                key: "q".to_owned(),
+                value: "CAFÉ".to_owned(),
+                case_insensitive: true,
+                negate: false,
+            },
+        ));
+    }
 }

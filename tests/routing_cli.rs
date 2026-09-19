@@ -1212,6 +1212,27 @@ fn local_file_uri_and_localhost_alias_require_the_picker() {
 }
 
 #[test]
+fn empty_authority_file_uri_requires_the_picker() {
+    let config_home = TempDir::new().expect("temporary configuration home should be created");
+    let executable = install_fake_browser(&config_home);
+    write_config(&config_home, &executable);
+    let path = write_html_file(config_home.path(), "empty-authority.html");
+    let uri = format!("file:{}", path.display());
+    assert_queued_without_dispatch(&config_home, std::ffi::OsStr::new(&uri));
+}
+
+#[test]
+fn existing_path_containing_scheme_separator_requires_the_picker() {
+    let config_home = TempDir::new().expect("temporary configuration home should be created");
+    let executable = install_fake_browser(&config_home);
+    write_config(&config_home, &executable);
+    fs::create_dir(config_home.path().join("notes:")).expect("colon directory should be writable");
+    let argument = config_home.path().join("notes://draft.html");
+    fs::write(&argument, "<html></html>").expect("fixture file should be writable");
+    assert_queued_without_dispatch(&config_home, argument.as_os_str());
+}
+
+#[test]
 fn relative_and_dot_segments_are_normalized_without_following_symlink_parents() {
     let config_home = TempDir::new().expect("temporary configuration home should be created");
     let executable = install_fake_browser(&config_home);

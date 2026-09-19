@@ -96,7 +96,7 @@ fn match_glob(atoms: &[GlobAtom], haystack: &str, case_insensitive: bool) -> boo
 
 fn chars_equal(expected: char, actual: char, case_insensitive: bool) -> bool {
     if case_insensitive {
-        expected.to_ascii_lowercase() == actual.to_ascii_lowercase()
+        expected.to_lowercase().eq(actual.to_lowercase())
     } else {
         expected == actual
     }
@@ -109,4 +109,23 @@ fn compile_regex(pattern: &str, case_insensitive: bool) -> Result<regex::Regex, 
         .case_insensitive(case_insensitive)
         .build()
         .map_err(|error| error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unicode_case_insensitive_glob_matches_whole_url() {
+        assert!(glob_matches(
+            "https://example.com/CAFÉ*",
+            "https://example.com/Café/Page",
+            true,
+        ));
+        assert!(!glob_matches(
+            "https://example.com/CAFÉ*",
+            "https://example.com/Café/Page",
+            false,
+        ));
+    }
 }
