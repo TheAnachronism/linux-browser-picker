@@ -315,8 +315,8 @@ msgstr "Open {label}"
 msgid "_Save destinations"
 msgstr "_Save destinations"
 
-msgid "Cannot remove a destination referenced by the Fallback Action"
-msgstr "Cannot remove a destination referenced by the Fallback Action"
+msgid "Cannot remove a destination referenced by a Routing Rule or the Fallback Action"
+msgstr "Cannot remove a destination referenced by a Routing Rule or the Fallback Action"
 
 msgid "Browser Application is not installed"
 msgstr "Browser Application is not installed"
@@ -397,6 +397,9 @@ msgstr ""
 msgid "Add Routing Rule"
 msgstr "Add Routing Rule"
 
+msgid "Remove Routing Rule"
+msgstr "Remove Routing Rule"
+
 msgid "Test Rules"
 msgstr "Test Rules"
 
@@ -412,11 +415,17 @@ msgstr "Enabled"
 msgid "Add OR group"
 msgstr "Add OR group"
 
+msgid "Remove OR group"
+msgstr "Remove OR group"
+
 msgid "All conditions below must match (AND)"
 msgstr "All conditions below must match (AND)"
 
 msgid "Add AND condition"
 msgstr "Add AND condition"
+
+msgid "Remove AND condition"
+msgstr "Remove AND condition"
 
 msgid "Include subdomains"
 msgstr "Include subdomains"

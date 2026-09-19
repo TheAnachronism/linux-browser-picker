@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::collections::HashSet;
 use std::rc::Rc;
 
 use adw::prelude::*;
@@ -10,6 +11,8 @@ use crate::configuration::{
 use crate::i18n;
 use crate::open_target::OpenTarget;
 use crate::routing::RoutingEvaluation;
+
+type ChangeCallback = Rc<RefCell<Option<Rc<dyn Fn()>>>>;
 
 #[derive(Clone, Copy)]
 #[repr(u32)]
@@ -92,6 +95,7 @@ pub struct RoutingRuleEditor {
     pub explanation: gtk::Label,
     list: gtk::ListBox,
     rules: Rc<RefCell<Vec<RuleWidgets>>>,
+    on_change: ChangeCallback,
 }
 
 #[derive(Clone)]
@@ -109,6 +113,7 @@ struct RuleWidgets {
 #[derive(Clone)]
 struct GroupWidgets {
     conditions: Rc<RefCell<Vec<ConditionWidgets>>>,
+    row: gtk::Box,
 }
 
 #[derive(Clone)]
@@ -119,6 +124,7 @@ struct ConditionWidgets {
     option: gtk::CheckButton,
     insensitive: gtk::CheckButton,
     negate: gtk::CheckButton,
+    row: gtk::Box,
 }
 
 impl RoutingRuleEditor {
@@ -143,13 +149,14 @@ impl RoutingRuleEditor {
         help.add_css_class("dim-label");
         root.append(&help);
 
+        let on_change: ChangeCallback = Rc::new(RefCell::new(None));
         let list = gtk::ListBox::new();
         list.set_selection_mode(gtk::SelectionMode::Single);
         list.add_css_class("boxed-list");
         list.update_property(&[gtk::accessible::Property::Label("Ordered Routing Rules")]);
         let rules = Rc::new(RefCell::new(Vec::new()));
         for rule in existing {
-            let widgets = build_rule(rule.clone());
+            let widgets = build_rule(rule.clone(), &on_change);
             list.append(&widgets.row);
             rules.borrow_mut().push(widgets);
         }
@@ -177,9 +184,12 @@ impl RoutingRuleEditor {
             gtk::accessible::Property::Label("Move Routing Rule down"),
             gtk::accessible::Property::KeyShortcuts("<Alt>Down"),
         ]);
+        let remove = gtk::Button::with_label(&i18n::text("Remove Routing Rule"));
+        remove.update_property(&[gtk::accessible::Property::Label("Remove Routing Rule")]);
         controls.append(&add);
         controls.append(&up);
         controls.append(&down);
+        controls.append(&remove);
         root.append(&controls);
 
         let matching = target
@@ -194,6 +204,8 @@ impl RoutingRuleEditor {
             list,
             #[strong]
             rules,
+            #[strong]
+            on_change,
             move |_| {
                 let number = rules.borrow().len() + 1;
                 let condition = UrlCondition::Host {
@@ -215,11 +227,37 @@ impl RoutingRuleEditor {
                         mode: LaunchMode::Normal,
                     },
                 };
-                let widgets = build_rule(rule);
+                let widgets = build_rule(rule, &on_change);
                 list.append(&widgets.row);
                 list.select_row(Some(&widgets.row));
                 widgets.id.grab_focus();
                 rules.borrow_mut().push(widgets);
+                notify_change(&on_change);
+            }
+        ));
+        remove.connect_clicked(glib::clone!(
+            #[weak]
+            list,
+            #[strong]
+            rules,
+            #[strong]
+            on_change,
+            move |_| {
+                let Some(selected) = list.selected_row() else {
+                    return;
+                };
+                let mut rules = rules.borrow_mut();
+                let Some(index) = rules.iter().position(|rule| rule.row == selected) else {
+                    return;
+                };
+                let row = rules.remove(index).row;
+                list.remove(&row);
+                if let Some(next) = rules.get(index).or_else(|| rules.last()) {
+                    list.select_row(Some(&next.row));
+                    next.destination.grab_focus();
+                }
+                drop(rules);
+                notify_change(&on_change);
             }
         ));
         up.connect_clicked(glib::clone!(
@@ -269,11 +307,36 @@ impl RoutingRuleEditor {
             explanation,
             list,
             rules,
+            on_change,
         }
     }
 
     pub fn rules(&self) -> Vec<RoutingRule> {
         self.rules.borrow().iter().map(collect_rule).collect()
+    }
+
+    pub fn connect_changed(&self, callback: impl Fn() + 'static) {
+        *self.on_change.borrow_mut() = Some(Rc::new(callback));
+    }
+
+    pub fn rewrite_destination_id(&self, from: &str, to: &str) {
+        if from == to {
+            return;
+        }
+        for rule in self.rules.borrow().iter() {
+            if rule.destination.text().as_str() == from {
+                rule.destination.set_text(to);
+            }
+        }
+    }
+
+    pub fn referenced_destination_ids(&self) -> HashSet<String> {
+        self.rules
+            .borrow()
+            .iter()
+            .map(|rule| rule.destination.text().trim().to_string())
+            .filter(|id| !id.is_empty())
+            .collect()
     }
 
     pub fn connect_order_shortcuts(&self, window: &adw::ApplicationWindow) {
@@ -347,22 +410,24 @@ pub fn explanation_text(evaluation: &RoutingEvaluation) -> String {
     lines.join("\n")
 }
 
-fn build_rule(rule: RoutingRule) -> RuleWidgets {
+fn build_rule(rule: RoutingRule, on_change: &ChangeCallback) -> RuleWidgets {
     let enabled = gtk::CheckButton::with_label(&i18n::text("Enabled"));
     enabled.set_active(rule.enabled);
-    let id = entry(&rule.id, "Routing Rule ID");
-    let name = entry(&rule.name, "Routing Rule name");
+    bind_toggle(&enabled, on_change);
+    let id = entry(&rule.id, "Routing Rule ID", on_change);
+    let name = entry(&rule.name, "Routing Rule name", on_change);
     let action = dropdown(
         &["Open automatically", "Preselect in Picker"],
         "Routing Rule action",
+        on_change,
     );
     let (action_index, destination_id, launch_mode) = match rule.action {
         RoutingAction::Open { destination, mode } => (0, destination, mode),
         RoutingAction::Preselect { destination, mode } => (1, destination, mode),
     };
     action.set_selected(action_index);
-    let destination = entry(&destination_id, "Action Browser Destination ID");
-    let mode = dropdown(&["Normal", "Private"], "Action Launch Mode");
+    let destination = entry(&destination_id, "Action Browser Destination ID", on_change);
+    let mode = dropdown(&["Normal", "Private"], "Action Launch Mode", on_change);
     mode.set_selected(if launch_mode == LaunchMode::Private {
         1
     } else {
@@ -379,28 +444,45 @@ fn build_rule(rule: RoutingRule) -> RuleWidgets {
 
     let groups_box = gtk::Box::new(gtk::Orientation::Vertical, 6);
     let groups = Rc::new(RefCell::new(Vec::new()));
-    for group in rule.groups {
-        let (widgets, row) = build_group(group);
-        groups_box.append(&row);
-        groups.borrow_mut().push(widgets);
-    }
     let add_group = gtk::Button::with_label(&i18n::text("Add OR group"));
     add_group.update_property(&[gtk::accessible::Property::Label("Add OR condition group")]);
+    for group in rule.groups {
+        let widgets = build_group(
+            group,
+            on_change,
+            &groups,
+            groups_box.clone(),
+            add_group.clone(),
+        );
+        groups_box.append(&widgets.row);
+        groups.borrow_mut().push(widgets);
+    }
     add_group.connect_clicked(glib::clone!(
         #[weak]
         groups_box,
         #[strong]
         groups,
+        #[strong]
+        on_change,
+        #[weak]
+        add_group,
         move |_| {
-            let (widgets, row) = build_group(ConditionGroup {
-                conditions: vec![UrlCondition::Host {
-                    value: String::new(),
-                    include_subdomains: false,
-                    negate: false,
-                }],
-            });
-            groups_box.append(&row);
+            let widgets = build_group(
+                ConditionGroup {
+                    conditions: vec![UrlCondition::Host {
+                        value: String::new(),
+                        include_subdomains: false,
+                        negate: false,
+                    }],
+                },
+                &on_change,
+                &groups,
+                groups_box.clone(),
+                add_group.clone(),
+            );
+            groups_box.append(&widgets.row);
             groups.borrow_mut().push(widgets);
+            notify_change(&on_change);
         }
     ));
 
@@ -430,7 +512,13 @@ fn build_rule(rule: RoutingRule) -> RuleWidgets {
     }
 }
 
-fn build_group(group: ConditionGroup) -> (GroupWidgets, gtk::Box) {
+fn build_group(
+    group: ConditionGroup,
+    on_change: &ChangeCallback,
+    groups: &Rc<RefCell<Vec<GroupWidgets>>>,
+    groups_box: gtk::Box,
+    add_group: gtk::Button,
+) -> GroupWidgets {
     let row = gtk::Box::new(gtk::Orientation::Vertical, 3);
     let heading = gtk::Label::builder()
         .label(i18n::text("All conditions below must match (AND)"))
@@ -439,35 +527,87 @@ fn build_group(group: ConditionGroup) -> (GroupWidgets, gtk::Box) {
     row.append(&heading);
     let conditions_box = gtk::Box::new(gtk::Orientation::Vertical, 3);
     let conditions = Rc::new(RefCell::new(Vec::new()));
+    let add = gtk::Button::with_label(&i18n::text("Add AND condition"));
     for condition in group.conditions {
-        let (widgets, condition_row) = build_condition(condition);
-        conditions_box.append(&condition_row);
+        let widgets = build_condition(
+            condition,
+            on_change,
+            &conditions,
+            conditions_box.clone(),
+            add.clone(),
+        );
+        conditions_box.append(&widgets.row);
         conditions.borrow_mut().push(widgets);
     }
     row.append(&conditions_box);
-    let add = gtk::Button::with_label(&i18n::text("Add AND condition"));
     add.connect_clicked(glib::clone!(
         #[weak]
         conditions_box,
         #[strong]
         conditions,
+        #[strong]
+        on_change,
+        #[weak]
+        add,
         move |_| {
-            let (widgets, condition_row) = build_condition(UrlCondition::Host {
-                value: String::new(),
-                include_subdomains: false,
-                negate: false,
-            });
-            conditions_box.append(&condition_row);
+            let widgets = build_condition(
+                UrlCondition::Host {
+                    value: String::new(),
+                    include_subdomains: false,
+                    negate: false,
+                },
+                &on_change,
+                &conditions,
+                conditions_box.clone(),
+                add.clone(),
+            );
+            conditions_box.append(&widgets.row);
             conditions.borrow_mut().push(widgets);
+            notify_change(&on_change);
+        }
+    ));
+    let remove = gtk::Button::with_label(&i18n::text("Remove OR group"));
+    remove.update_property(&[gtk::accessible::Property::Label("Remove OR group")]);
+    remove.connect_clicked(glib::clone!(
+        #[weak]
+        row,
+        #[weak]
+        groups_box,
+        #[strong]
+        groups,
+        #[strong]
+        on_change,
+        #[strong]
+        add_group,
+        move |_| {
+            let mut groups = groups.borrow_mut();
+            if let Some(index) = groups.iter().position(|group| group.row == row) {
+                groups.remove(index);
+                groups_box.remove(&row);
+                if let Some(next) = groups.get(index).or_else(|| groups.last()) {
+                    focus_group(next);
+                } else {
+                    add_group.grab_focus();
+                }
+            }
+            drop(groups);
+            notify_change(&on_change);
         }
     ));
     row.append(&add);
-    (GroupWidgets { conditions }, row)
+    row.append(&remove);
+    GroupWidgets { conditions, row }
 }
 
-fn build_condition(condition: UrlCondition) -> (ConditionWidgets, gtk::Box) {
+fn build_condition(
+    condition: UrlCondition,
+    on_change: &ChangeCallback,
+    conditions: &Rc<RefCell<Vec<ConditionWidgets>>>,
+    conditions_box: gtk::Box,
+    add: gtk::Button,
+) -> ConditionWidgets {
     let labels = ConditionKind::labels();
-    let kind = dropdown(&labels, "URL Condition type");
+    let kind = dropdown(&labels, "URL Condition type", on_change);
     let (key_text, value_text, option_active, insensitive_active, negate_active) = match &condition
     {
         UrlCondition::Scheme { value, negate } => {
@@ -540,14 +680,17 @@ fn build_condition(condition: UrlCondition) -> (ConditionWidgets, gtk::Box) {
         ),
     };
     kind.set_selected(ConditionKind::from_condition(&condition) as u32);
-    let key = entry(&key_text, "URL Condition query key");
-    let value = entry(&value_text, "URL Condition value");
+    let key = entry(&key_text, "URL Condition query key", on_change);
+    let value = entry(&value_text, "URL Condition value", on_change);
     let option = gtk::CheckButton::with_label(&i18n::text("Include subdomains"));
     option.set_active(option_active);
     let insensitive = gtk::CheckButton::with_label(&i18n::text("Ignore case"));
     insensitive.set_active(insensitive_active);
     let negate = gtk::CheckButton::with_label(&i18n::text("Not"));
     negate.set_active(negate_active);
+    bind_toggle(&option, on_change);
+    bind_toggle(&insensitive, on_change);
+    bind_toggle(&negate, on_change);
     let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     row.append(&kind);
     row.append(&key);
@@ -555,21 +698,48 @@ fn build_condition(condition: UrlCondition) -> (ConditionWidgets, gtk::Box) {
     row.append(&option);
     row.append(&insensitive);
     row.append(&negate);
-    (
-        ConditionWidgets {
-            kind,
-            key,
-            value,
-            option,
-            insensitive,
-            negate,
-        },
+    let remove = gtk::Button::with_label(&i18n::text("Remove AND condition"));
+    remove.update_property(&[gtk::accessible::Property::Label("Remove AND condition")]);
+    remove.connect_clicked(glib::clone!(
+        #[weak]
         row,
-    )
+        #[weak]
+        conditions_box,
+        #[strong]
+        conditions,
+        #[strong]
+        on_change,
+        #[strong]
+        add,
+        move |_| {
+            let mut conditions = conditions.borrow_mut();
+            if let Some(index) = conditions.iter().position(|condition| condition.row == row) {
+                conditions.remove(index);
+                conditions_box.remove(&row);
+                if let Some(next) = conditions.get(index).or_else(|| conditions.last()) {
+                    next.value.grab_focus();
+                } else {
+                    add.grab_focus();
+                }
+            }
+            drop(conditions);
+            notify_change(&on_change);
+        }
+    ));
+    row.append(&remove);
+    ConditionWidgets {
+        kind,
+        key,
+        value,
+        option,
+        insensitive,
+        negate,
+        row,
+    }
 }
 
 fn collect_rule(rule: &RuleWidgets) -> RoutingRule {
-    let destination = rule.destination.text().to_string();
+    let destination = rule.destination.text().trim().to_string();
     let mode = if rule.mode.selected() == 1 {
         LaunchMode::Private
     } else {
@@ -673,19 +843,49 @@ fn reorder(list: &gtk::ListBox, rules: &Rc<RefCell<Vec<RuleWidgets>>>, direction
     row.grab_focus();
 }
 
-fn entry(text: &str, label: &str) -> gtk::Entry {
+fn focus_group(group: &GroupWidgets) {
+    if let Some(condition) = group.conditions.borrow().first() {
+        condition.value.grab_focus();
+    }
+}
+
+fn notify_change(on_change: &ChangeCallback) {
+    if let Some(callback) = on_change.borrow().clone() {
+        callback();
+    }
+}
+
+fn bind_toggle(button: &gtk::CheckButton, on_change: &ChangeCallback) {
+    button.connect_toggled(glib::clone!(
+        #[strong]
+        on_change,
+        move |_| notify_change(&on_change)
+    ));
+}
+
+fn entry(text: &str, label: &str, on_change: &ChangeCallback) -> gtk::Entry {
     let entry = gtk::Entry::builder()
         .text(text)
         .placeholder_text(i18n::text(label))
         .build();
     entry.update_property(&[gtk::accessible::Property::Label(label)]);
+    entry.connect_changed(glib::clone!(
+        #[strong]
+        on_change,
+        move |_| notify_change(&on_change)
+    ));
     entry
 }
 
-fn dropdown(values: &[&str], label: &str) -> gtk::DropDown {
+fn dropdown(values: &[&str], label: &str, on_change: &ChangeCallback) -> gtk::DropDown {
     let localized: Vec<_> = values.iter().map(|value| i18n::text(value)).collect();
     let localized: Vec<_> = localized.iter().map(String::as_str).collect();
     let dropdown = gtk::DropDown::from_strings(&localized);
     dropdown.update_property(&[gtk::accessible::Property::Label(label)]);
+    dropdown.connect_selected_notify(glib::clone!(
+        #[strong]
+        on_change,
+        move |_| notify_change(&on_change)
+    ));
     dropdown
 }

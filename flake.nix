@@ -1279,8 +1279,179 @@ EOF
                                       export XDG_CONFIG_HOME="$TMPDIR/config"
                                     }
 
+                                    run_reference_safe_configuration() {
+                                      export XDG_CONFIG_HOME="$TMPDIR/reference-safe-config"
+                                      mkdir -p "$XDG_CONFIG_HOME/browser-picker"
+                                      export BROWSER_PICKER_TEST_OUTPUT="$TMPDIR/reference-safe-argv"
+                                      rm -f "$BROWSER_PICKER_TEST_OUTPUT"
+                                      cat > "$XDG_CONFIG_HOME/browser-picker/config.toml" <<EOF
+                version = 1
+
+                [[destinations]]
+                id = "work"
+                label = "Work Browser"
+
+                [destinations.application]
+                type = "manual"
+                label = "Work Browser Application"
+                executable = "$TMPDIR/controlled-browser"
+                args = ["--work", "{target}"]
+
+                [[destinations]]
+                id = "spare"
+                label = "Spare Browser"
+
+                [destinations.application]
+                type = "manual"
+                label = "Spare Browser Application"
+                executable = "$TMPDIR/controlled-browser"
+                args = ["--spare", "{target}"]
+
+                [[rules]]
+                id = "later"
+                name = "Later"
+                enabled = true
+
+                [rules.action]
+                type = "open"
+                destination = "spare"
+                mode = "normal"
+
+                [[rules.groups]]
+
+                [[rules.groups.conditions]]
+                type = "host"
+                value = "later.example"
+
+                [[rules]]
+                id = "auto"
+                name = "Automatic"
+                enabled = true
+
+                [rules.action]
+                type = "open"
+                destination = "work"
+                mode = "normal"
+
+                [[rules.groups]]
+
+                [[rules.groups.conditions]]
+                type = "host"
+                value = "other.example"
+
+                [[rules.groups]]
+
+                [[rules.groups.conditions]]
+                type = "scheme"
+                value = "https"
+
+                [[rules.groups.conditions]]
+                type = "host"
+                value = "rename.example"
+
+                [fallback]
+                action = "open"
+                destination = "work"
+                mode = "normal"
+                EOF
+                                      config="$XDG_CONFIG_HOME/browser-picker/config.toml"
+
+                                      ${browser-picker}/bin/browser-picker config &
+                                      launcher=$!
+                                      window=
+                                      for attempt in $(seq 1 100); do
+                                        set -- $(xdotool search --onlyvisible --name "^Browser Picker$" 2>/dev/null || true)
+                                        if [ "$#" -gt 0 ]; then
+                                          window=$1
+                                          break
+                                        fi
+                                        sleep 0.1
+                                      done
+                                      test -n "$window"
+                                      echo "reference-safe: window ready" >&2
+                                      python3 "$inspect" assert \
+                                        "Remove Routing Rule" \
+                                        "Remove OR group" \
+                                        "Remove AND condition"
+                                      python3 "$inspect" disabled "Enable Browser Candidate Work Browser"
+                                      python3 "$inspect" checked "Enable Browser Candidate Work Browser"
+                                      python3 "$inspect" focus "Browser Destination ID"
+                                      xdotool windowfocus --sync "$window"
+                                      xdotool key --clearmodifiers ctrl+a
+                                      xdotool key --clearmodifiers BackSpace
+                                      xdotool type "renamed-work"
+                                      xdotool key --clearmodifiers alt+s
+                                      for attempt in $(seq 1 100); do
+                                        grep -q "id = \"renamed-work\"" "$config" && break
+                                        sleep 0.1
+                                      done
+                                      grep -q "id = \"renamed-work\"" "$config" || { echo "missing renamed destination id"; cat "$config"; exit 1; }
+                                      grep -q "destination = \"renamed-work\"" "$config" || { echo "missing renamed destination reference"; cat "$config"; exit 1; }
+                                      grep -A3 "^\[fallback\]$" "$config" | grep -q "destination = \"renamed-work\"" || { echo "fallback was not rewritten"; cat "$config"; exit 1; }
+                                      grep -q "id = \"work\"" "$config" && { echo "old destination id remained"; cat "$config"; exit 1; } || true
+                                      echo "reference-safe: renamed" >&2
+                                      python3 "$inspect" activate "Open Work Browser"
+                                      python3 "$inspect" wait "Show Picker"
+                                      python3 "$inspect" activate "Show Picker"
+                                      xdotool key --clearmodifiers Home Return
+                                      sleep 0.2
+                                      python3 "$inspect" disabled "Enable Browser Candidate Work Browser"
+                                      python3 "$inspect" pointer "Routing Rule ID"
+                                      python3 "$inspect" activate "Remove Routing Rule"
+                                      sleep 0.2
+                                      python3 "$inspect" pointer "Action Browser Destination ID"
+                                      xdotool key --clearmodifiers ctrl+a
+                                      xdotool type "spare"
+                                      python3 "$inspect" enabled "Enable Browser Candidate Work Browser"
+                                      python3 "$inspect" checked "Enable Browser Candidate Work Browser"
+                                      python3 "$inspect" activate "Remove OR group"
+                                      sleep 0.2
+                                      python3 "$inspect" activate "Remove AND condition"
+                                      sleep 0.2
+                                      xdotool key --clearmodifiers alt+s
+                                      for attempt in $(seq 1 100); do
+                                        grep -q "action = \"show-picker\"" "$config" || continue
+                                        grep -q "value = \"rename.example\"" "$config" && break
+                                        sleep 0.1
+                                      done
+                                      echo "reference-safe: second save" >&2
+                                      grep -q "id = \"renamed-work\"" "$config" || { echo "missing renamed destination"; cat "$config"; exit 1; }
+                                      grep -q "destination = \"renamed-work\"" "$config" && { echo "renamed destination still referenced"; cat "$config"; exit 1; } || true
+                                      grep -q "id = \"later\"" "$config" && { echo "later rule was not removed"; cat "$config"; exit 1; } || true
+                                      grep -q "value = \"other.example\"" "$config" && { echo "other.example OR group remained"; cat "$config"; exit 1; } || true
+                                      grep -q "value = \"https\"" "$config" && { echo "https AND condition remained"; cat "$config"; exit 1; } || true
+                                      grep -q "id = \"auto\"" "$config" || { echo "missing auto rule"; cat "$config"; exit 1; }
+                                      grep -q "id = \"spare\"" "$config" || { echo "missing spare destination"; cat "$config"; exit 1; }
+                                      grep -q "destination = \"spare\"" "$config" || { echo "missing spare destination reference"; cat "$config"; exit 1; }
+                                      grep -q "value = \"rename.example\"" "$config" || { echo "missing rename host"; cat "$config"; exit 1; }
+                                      grep -A2 "^\[fallback\]$" "$config" | grep -q "action = \"show-picker\"" || { echo "fallback was not show-picker"; cat "$config"; exit 1; }
+                                      cp "$config" "$TMPDIR/reference-safe-saved.toml"
+                                      python3 "$inspect" activate "Remove AND condition"
+                                      python3 "$inspect" wait "condition groups must not be empty"
+                                      xdotool key --clearmodifiers alt+s
+                                      sleep 0.3
+                                      cmp "$config" "$TMPDIR/reference-safe-saved.toml" || { echo "invalid draft overwrote saved configuration"; cat "$config"; exit 1; }
+                                      xdotool windowfocus --sync "$window"
+                                      xdotool key --clearmodifiers ctrl+w
+                                      python3 "$inspect" activate "Discard"
+                                      wait "$launcher"
+
+                                      target="https://rename.example/reloaded"
+                                      ${browser-picker}/bin/browser-picker "$target"
+                                      expected="--spare
+                $target"
+                                      for attempt in $(seq 1 100); do
+                                        test "$(cat "$BROWSER_PICKER_TEST_OUTPUT" 2>/dev/null || true)" = "$expected" && break
+                                        sleep 0.1
+                                      done
+                                      test "$(cat "$BROWSER_PICKER_TEST_OUTPUT")" = "$expected"
+                                      unset BROWSER_PICKER_TEST_OUTPUT
+                                      export XDG_CONFIG_HOME="$TMPDIR/config"
+                                    }
+
                                     run_first_run_and_picker
                                     run_manual_destination_configuration
+                                    run_reference_safe_configuration
                                     run_and_assert_window ${browser-picker}/bin/browser-picker
                                     run_and_assert_window gtk-launch io.github.TheAnachronism.BrowserPicker
                                     run_picker_and_assert_launch

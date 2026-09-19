@@ -232,6 +232,7 @@ pub fn present(application: &adw::Application, session: PickerSession, store: Co
     let show_picker_label = i18n::text("Show Picker");
     let fallback = gtk::DropDown::from_strings(&[&show_picker_label]);
     fallback.update_property(&[gtk::accessible::Property::Label("Fallback Action")]);
+    fallback.set_focusable(true);
     content.append(&fallback);
     let fallback_mode_label = gtk::Label::builder()
         .label(i18n::text("Fallback Launch Mode"))
@@ -311,6 +312,36 @@ pub fn present(application: &adw::Application, session: PickerSession, store: Co
             FallbackAction::ShowPicker => None,
         }
     })));
+    let restoring_fallback = Rc::new(Cell::new(false));
+    let refresh_references = glib::clone!(
+        #[weak]
+        fallback,
+        #[weak]
+        fallback_mode,
+        #[weak]
+        error,
+        #[strong]
+        items,
+        #[strong]
+        preferred_fallback,
+        #[strong]
+        rule_editor,
+        move || {
+            update_remove_blocks(
+                &items.borrow(),
+                &preferred_fallback,
+                &rule_editor.referenced_destination_ids(),
+            );
+            fallback_mode.set_sensitive(fallback.selected() != 0);
+            show_draft_status(
+                &error,
+                &items.borrow(),
+                &rule_editor.rules(),
+                &fallback,
+                &fallback_mode,
+            );
+        }
+    );
     let refresh_fallback = glib::clone!(
         #[weak]
         fallback,
@@ -319,10 +350,21 @@ pub fn present(application: &adw::Application, session: PickerSession, store: Co
         #[strong]
         preferred_fallback,
         #[strong]
-        fallback_mode,
+        rule_editor,
+        #[strong]
+        refresh_references,
+        #[strong]
+        restoring_fallback,
         move || {
-            restore_fallback(&fallback, &items.borrow(), &preferred_fallback);
-            fallback_mode.set_sensitive(fallback.selected() != 0);
+            restoring_fallback.set(true);
+            restore_fallback(
+                &fallback,
+                &items.borrow(),
+                &preferred_fallback,
+                &rule_editor.referenced_destination_ids(),
+            );
+            restoring_fallback.set(false);
+            refresh_references();
         }
     );
     refresh_fallback();
@@ -331,31 +373,31 @@ pub fn present(application: &adw::Application, session: PickerSession, store: Co
         items,
         #[strong]
         preferred_fallback,
-        #[weak]
-        fallback_mode,
+        #[strong]
+        refresh_references,
+        #[strong]
+        restoring_fallback,
         move |fallback| {
+            if restoring_fallback.get() {
+                return;
+            }
             update_preferred_fallback(fallback, &items.borrow(), &preferred_fallback);
-            update_remove_blocks(&items.borrow(), &preferred_fallback);
-            fallback_mode.set_sensitive(fallback.selected() != 0);
+            refresh_references();
         }
+    ));
+    rule_editor.connect_changed(glib::clone!(
+        #[strong]
+        refresh_references,
+        move || refresh_references()
     ));
 
     for item in items.borrow().iter() {
-        item.enabled.connect_toggled(glib::clone!(
-            #[strong]
-            refresh_fallback,
-            move |_| refresh_fallback()
-        ));
-        item.id.connect_changed(glib::clone!(
-            #[strong]
-            refresh_fallback,
-            move |_| refresh_fallback()
-        ));
-        item.label.connect_changed(glib::clone!(
-            #[strong]
-            refresh_fallback,
-            move |_| refresh_fallback()
-        ));
+        bind_destination_item(
+            item,
+            &rule_editor,
+            &preferred_fallback,
+            refresh_fallback.clone(),
+        );
     }
     let explain = glib::clone!(
         #[weak]
@@ -469,6 +511,10 @@ pub fn present(application: &adw::Application, session: PickerSession, store: Co
         #[strong]
         items,
         #[strong]
+        rule_editor,
+        #[strong]
+        preferred_fallback,
+        #[strong]
         refresh_fallback,
         move |_| {
             let mut used_ids = items
@@ -478,21 +524,12 @@ pub fn present(application: &adw::Application, session: PickerSession, store: Co
                 .collect();
             let slug = discovery::unique_slug("manual-browser", &mut used_ids);
             let item = item_from_manual(slug);
-            item.enabled.connect_toggled(glib::clone!(
-                #[strong]
-                refresh_fallback,
-                move |_| refresh_fallback()
-            ));
-            item.id.connect_changed(glib::clone!(
-                #[strong]
-                refresh_fallback,
-                move |_| refresh_fallback()
-            ));
-            item.label.connect_changed(glib::clone!(
-                #[strong]
-                refresh_fallback,
-                move |_| refresh_fallback()
-            ));
+            bind_destination_item(
+                &item,
+                &rule_editor,
+                &preferred_fallback,
+                refresh_fallback.clone(),
+            );
             list.append(&item.row);
             list.select_row(Some(&item.row));
             item.id.grab_focus();
@@ -751,10 +788,15 @@ pub fn present(application: &adw::Application, session: PickerSession, store: Co
     ));
 
     window.present();
-    if first_run && let Some(first) = items.borrow().first() {
+    if let Some(first) = items.borrow().first() {
         let enable = first.enabled.clone();
+        let id = first.id.clone();
         glib::idle_add_local_once(move || {
-            enable.grab_focus();
+            if first_run {
+                enable.grab_focus();
+            } else {
+                id.grab_focus();
+            }
         });
     }
 }
@@ -1330,7 +1372,9 @@ fn restore_fallback(
     fallback: &gtk::DropDown,
     items: &[EditorItem],
     preferred: &RefCell<Option<String>>,
+    referenced_rules: &HashSet<String>,
 ) {
+    let wanted = preferred.borrow().clone();
     let mut labels = vec![i18n::text("Show Picker")];
     let mut ids = Vec::new();
     for item in items {
@@ -1347,15 +1391,14 @@ fn restore_fallback(
     let label_refs: Vec<&str> = labels.iter().map(String::as_str).collect();
     fallback.set_model(Some(&gtk::StringList::new(&label_refs)));
 
-    let selected = preferred
-        .borrow()
+    let selected = wanted
         .as_ref()
         .and_then(|destination| ids.iter().position(|id| id == destination))
         .map(|index| index + 1)
         .unwrap_or(0);
     fallback.set_selected(selected as u32);
-    update_preferred_fallback(fallback, items, preferred);
-    update_remove_blocks(items, preferred);
+    *preferred.borrow_mut() = wanted;
+    update_remove_blocks(items, preferred, referenced_rules);
 }
 
 fn update_preferred_fallback(
@@ -1375,12 +1418,17 @@ fn update_preferred_fallback(
     };
 }
 
-fn update_remove_blocks(items: &[EditorItem], preferred: &RefCell<Option<String>>) {
+fn update_remove_blocks(
+    items: &[EditorItem],
+    preferred: &RefCell<Option<String>>,
+    referenced_rules: &HashSet<String>,
+) {
     let referenced = preferred.borrow();
     for item in items {
-        let blocked = referenced
-            .as_deref()
-            .is_some_and(|destination| item.id.text().as_str() == destination);
+        let id = item.id.text();
+        let id = id.trim();
+        let blocked =
+            referenced.as_deref().map(str::trim) == Some(id) || referenced_rules.contains(id);
         let can_toggle = if blocked {
             false
         } else if item.enabled.is_active() {
@@ -1391,7 +1439,7 @@ fn update_remove_blocks(items: &[EditorItem], preferred: &RefCell<Option<String>
         item.enabled.set_sensitive(can_toggle);
         if blocked {
             item.enabled.set_tooltip_text(Some(&i18n::text(
-                "Cannot remove a destination referenced by the Fallback Action",
+                "Cannot remove a destination referenced by a Routing Rule or the Fallback Action",
             )));
         } else if !item.enable_allowed && !item.enabled.is_active() {
             item.enabled.set_tooltip_text(Some(&i18n::text(
@@ -1399,6 +1447,63 @@ fn update_remove_blocks(items: &[EditorItem], preferred: &RefCell<Option<String>
             )));
         } else {
             item.enabled.set_tooltip_text(None);
+        }
+    }
+}
+
+fn bind_destination_item(
+    item: &EditorItem,
+    rule_editor: &Rc<RoutingRuleEditor>,
+    preferred_fallback: &Rc<RefCell<Option<String>>>,
+    refresh_fallback: impl Fn() + Clone + 'static,
+) {
+    let previous_id = Rc::new(RefCell::new(item.id.text().to_string()));
+    item.enabled.connect_toggled(glib::clone!(
+        #[strong]
+        refresh_fallback,
+        move |_| refresh_fallback()
+    ));
+    item.id.connect_changed(glib::clone!(
+        #[strong]
+        previous_id,
+        #[strong]
+        rule_editor,
+        #[strong]
+        preferred_fallback,
+        #[strong]
+        refresh_fallback,
+        move |entry| {
+            let next = entry.text().to_string();
+            let mut previous = previous_id.borrow_mut();
+            if *previous != next {
+                rule_editor.rewrite_destination_id(&previous, &next);
+                if preferred_fallback.borrow().as_deref() == Some(previous.as_str()) {
+                    *preferred_fallback.borrow_mut() = Some(next.clone());
+                }
+                *previous = next;
+            }
+            refresh_fallback();
+        }
+    ));
+    item.label.connect_changed(glib::clone!(
+        #[strong]
+        refresh_fallback,
+        move |_| refresh_fallback()
+    ));
+}
+
+fn show_draft_status(
+    error: &gtk::Label,
+    items: &[EditorItem],
+    rules: &[RoutingRule],
+    fallback: &gtk::DropDown,
+    fallback_mode: &gtk::DropDown,
+) {
+    match collect_configuration(items, rules, fallback, fallback_mode) {
+        Ok(_) => error.set_visible(false),
+        Err(failure) => {
+            error.set_label(&failure.message());
+            error.set_visible(true);
         }
     }
 }
@@ -1468,7 +1573,7 @@ fn collect_configuration(
             None => (item.application_label.clone(), item.launch.clone()),
         };
         let destination = BrowserDestination {
-            id: item.id.text().to_string(),
+            id: item.id.text().trim().to_string(),
             label: item.label.text().to_string(),
             application_label,
             profile_label: item.profile_label.clone(),
