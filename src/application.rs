@@ -432,10 +432,10 @@ fn open_configuration_store() -> Result<configuration::ConfigurationStore, confi
     configuration::ConfigurationStore::inspect_path(&configuration::default_path()?)
 }
 
-fn present_setup(application: &adw::Application, session: &PickerSession) {
+pub(crate) fn present_setup(application: &adw::Application, session: &PickerSession) {
     match open_configuration_store() {
         Ok(store) => setup::present(application, session.clone(), store),
-        Err(_) => show_configuration_window(application, session),
+        Err(error) => show_configuration_recovery(application, session, error.message()),
     }
 }
 
@@ -600,7 +600,11 @@ fn present_configuration(application: &adw::Application, session: &PickerSession
     present_setup(application, session);
 }
 
-fn show_configuration_window(application: &adw::Application, session: &PickerSession) {
+fn show_configuration_recovery(
+    application: &adw::Application,
+    session: &PickerSession,
+    diagnostic: String,
+) {
     session.set_configuration_open(true);
     if let Some(window) = application
         .windows()
@@ -610,16 +614,50 @@ fn show_configuration_window(application: &adw::Application, session: &PickerSes
         window.present();
         return;
     }
-    let page = adw::StatusPage::builder()
-        .title(i18n::text("Browser Picker"))
-        .description(i18n::text(
-            "Configure browser destinations and routing rules.",
-        ))
+    let content = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    content.set_margin_top(18);
+    content.set_margin_bottom(18);
+    content.set_margin_start(18);
+    content.set_margin_end(18);
+    let heading = gtk::Label::builder()
+        .label(i18n::text("Configuration could not be used"))
+        .xalign(0.0)
         .build();
+    heading.add_css_class("title-2");
+    content.append(&heading);
+    let details = gtk::Label::builder()
+        .label(&diagnostic)
+        .xalign(0.0)
+        .wrap(true)
+        .selectable(true)
+        .build();
+    details.add_css_class("error");
+    details.update_property(&[gtk::accessible::Property::Description(
+        "Configuration recovery error",
+    )]);
+    content.append(&details);
+    let hint = gtk::Label::builder()
+        .label(i18n::text(
+            "Retry after setting HOME or an absolute XDG_CONFIG_HOME. Close this window to keep waiting Open Targets queued. Automatic routing stays disabled until configuration can be loaded.",
+        ))
+        .xalign(0.0)
+        .wrap(true)
+        .build();
+    content.append(&hint);
+    let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 9);
+    buttons.set_halign(gtk::Align::End);
+    let retry = gtk::Button::with_mnemonic(&i18n::text("_Retry"));
+    retry.add_css_class("suggested-action");
+    retry.update_property(&[
+        gtk::accessible::Property::Label("Retry"),
+        gtk::accessible::Property::KeyShortcuts("<Alt>r"),
+    ]);
+    buttons.append(&retry);
+    content.append(&buttons);
+
     let toolbar = adw::ToolbarView::new();
     toolbar.add_top_bar(&adw::HeaderBar::new());
-    toolbar.set_content(Some(&page));
-
+    toolbar.set_content(Some(&content));
     let window = adw::ApplicationWindow::builder()
         .application(application)
         .title(i18n::text("Browser Picker"))
@@ -629,7 +667,19 @@ fn show_configuration_window(application: &adw::Application, session: &PickerSes
         .build();
     window.set_widget_name("configuration-error");
     apply_window_state(&window, "configuration");
-    let session = session.clone();
+
+    retry.connect_clicked(glib::clone!(
+        #[weak]
+        application,
+        #[weak]
+        window,
+        #[strong]
+        session,
+        move |_| {
+            window.close();
+            present_setup(&application, &session);
+        }
+    ));
     window.connect_close_request(glib::clone!(
         #[weak]
         application,

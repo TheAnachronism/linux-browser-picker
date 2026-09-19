@@ -49,12 +49,15 @@ impl ConfigurationStore {
     pub fn inspect_path(path: &Path) -> Result<Self, Error> {
         match fs::symlink_metadata(path) {
             Err(error) if error.kind() == ErrorKind::NotFound => Ok(Self::empty(path)),
-            Err(error) => Err(Error::Read(error.kind())),
-            Ok(_) => {
-                let bytes =
-                    fs::read(resolve_path(path)?).map_err(|error| Error::Read(error.kind()))?;
-                Self::from_bytes(path, bytes)
-            }
+            Err(error) => Ok(Self::unusable(path, Error::Read(error.kind()))),
+            Ok(_) => match resolve_existing(path) {
+                Err(error) => Ok(Self::unusable(path, error)),
+                Ok(None) => Ok(Self::empty(path)),
+                Ok(Some(target)) => match fs::read(&target) {
+                    Ok(bytes) => Self::from_bytes(path, bytes),
+                    Err(error) => Ok(Self::unusable(path, Error::Read(error.kind()))),
+                },
+            },
         }
     }
 
@@ -103,6 +106,17 @@ impl ConfigurationStore {
             configuration: None,
             warnings: Vec::new(),
             status: StoreStatus::Missing,
+        }
+    }
+
+    fn unusable(path: &Path, error: Error) -> Self {
+        Self {
+            path: path.to_path_buf(),
+            original_bytes: None,
+            document: DocumentMut::new(),
+            configuration: None,
+            warnings: Vec::new(),
+            status: StoreStatus::Invalid(error),
         }
     }
 
@@ -332,21 +346,40 @@ fn toml_item_value(item: &Item) -> Option<toml::Value> {
 }
 
 fn resolve_path(path: &Path) -> Result<PathBuf, Error> {
+    match follow_symlinks(path, true)? {
+        Some(target) => Ok(target),
+        None => Err(Error::Read(ErrorKind::NotFound)),
+    }
+}
+
+fn resolve_existing(path: &Path) -> Result<Option<PathBuf>, Error> {
+    follow_symlinks(path, false)
+}
+
+fn follow_symlinks(path: &Path, create_missing: bool) -> Result<Option<PathBuf>, Error> {
     let mut current = path.to_path_buf();
     let mut seen = HashSet::new();
+    let mut followed_link = false;
     loop {
         if !seen.insert(current.clone()) {
             return Err(Error::NotRegularFile);
         }
         match fs::symlink_metadata(&current) {
             Err(error) if error.kind() == ErrorKind::NotFound => {
+                if followed_link && !create_missing {
+                    return Err(Error::BrokenLink);
+                }
+                if !create_missing {
+                    return Ok(None);
+                }
                 if let Some(parent) = current.parent() {
                     fs::create_dir_all(parent).map_err(|error| Error::Save(error.kind()))?;
                 }
-                return Ok(current);
+                return Ok(Some(current));
             }
             Err(error) => return Err(Error::Read(error.kind())),
             Ok(metadata) if metadata.file_type().is_symlink() => {
+                followed_link = true;
                 let next = fs::read_link(&current).map_err(|error| Error::Read(error.kind()))?;
                 current = if next.is_absolute() {
                     next
@@ -361,7 +394,7 @@ fn resolve_path(path: &Path) -> Result<PathBuf, Error> {
                 if metadata.uid() != current_uid() {
                     return Err(Error::NotOwned);
                 }
-                return Ok(current);
+                return Ok(Some(current));
             }
             Ok(_) => return Err(Error::NotRegularFile),
         }
@@ -853,6 +886,112 @@ mode = "private"
             ConfigurationStore::open_path(&path),
             Err(Error::NotRegularFile)
         ));
+        let store = ConfigurationStore::inspect_path(&path)
+            .expect("an unusable configuration path should still be inspectable");
+        assert!(matches!(
+            store.status,
+            StoreStatus::Invalid(Error::NotRegularFile)
+        ));
+        assert!(store.configuration.is_none());
+        assert!(path.is_dir());
+    }
+
+    #[test]
+    fn broken_symlink_is_invalid_and_leaves_the_link_unchanged() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("config.toml");
+        unix_fs::symlink(dir.path().join("missing.toml"), &path).unwrap();
+        let store = ConfigurationStore::inspect_path(&path)
+            .expect("a broken configuration symlink should still be inspectable");
+        assert!(matches!(
+            store.status,
+            StoreStatus::Invalid(Error::BrokenLink)
+        ));
+        assert_eq!(error_message(&store), "Configuration symlink is broken");
+        assert!(store.configuration.is_none());
+        assert!(path.symlink_metadata().unwrap().file_type().is_symlink());
+        assert!(!dir.path().join("missing.toml").exists());
+        assert!(matches!(
+            ConfigurationStore::open_path(&path),
+            Err(Error::BrokenLink)
+        ));
+    }
+
+    #[test]
+    fn non_regular_socket_is_invalid_and_leaves_the_special_file_unchanged() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("config.toml");
+        std::os::unix::net::UnixDatagram::bind(&path).expect("socket should bind");
+        let original = path.symlink_metadata().unwrap().file_type();
+        let store = ConfigurationStore::inspect_path(&path)
+            .expect("a non-regular configuration target should still be inspectable");
+        assert!(matches!(
+            store.status,
+            StoreStatus::Invalid(Error::NotRegularFile)
+        ));
+        assert_eq!(
+            error_message(&store),
+            "Configuration must be a regular file"
+        );
+        assert_eq!(path.symlink_metadata().unwrap().file_type(), original);
+    }
+
+    #[test]
+    fn permission_denied_is_invalid_and_leaves_the_file_unchanged() {
+        let dir = TempDir::new().unwrap();
+        let path = write_sample(&dir, "Work");
+        let original = fs::read(&path).unwrap();
+        let mut permissions = fs::metadata(&path).unwrap().permissions();
+        permissions.set_mode(0o000);
+        fs::set_permissions(&path, permissions).unwrap();
+        let store = ConfigurationStore::inspect_path(&path)
+            .expect("a permission failure should still be inspectable");
+        let readable = fs::set_permissions(&path, fs::Permissions::from_mode(0o600));
+        readable.expect("test cleanup should restore readability");
+        if matches!(
+            store.status,
+            StoreStatus::Invalid(Error::Read(ErrorKind::PermissionDenied))
+        ) {
+            assert_eq!(
+                error_message(&store),
+                "Browser Picker configuration permission was denied"
+            );
+            assert_eq!(fs::read(&path).unwrap(), original);
+        } else if store.configuration.is_some() {
+            // Running as root can still read mode 000 files.
+            assert!(matches!(store.status, StoreStatus::Current));
+        } else {
+            panic!("unexpected status: {:?}", store.status);
+        }
+    }
+
+    #[test]
+    fn foreign_owned_file_is_invalid_without_loading_configuration() {
+        let path = Path::new("/etc/passwd");
+        let Ok(metadata) = fs::metadata(path) else {
+            return;
+        };
+        if metadata.uid() == current_uid() {
+            return;
+        }
+        let store = ConfigurationStore::inspect_path(path)
+            .expect("a foreign-owned configuration path should still be inspectable");
+        assert!(matches!(
+            store.status,
+            StoreStatus::Invalid(Error::NotOwned)
+        ));
+        assert_eq!(
+            error_message(&store),
+            "Configuration is not owned by the current user"
+        );
+        assert!(store.configuration.is_none());
+    }
+
+    fn error_message(store: &ConfigurationStore) -> String {
+        match &store.status {
+            StoreStatus::Invalid(error) => error.message(),
+            other => panic!("expected invalid status, got {other:?}"),
+        }
     }
 
     fn fixture(name: &str) -> String {

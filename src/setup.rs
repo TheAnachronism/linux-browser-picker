@@ -92,12 +92,14 @@ pub fn present(application: &adw::Application, session: PickerSession, store: Co
     heading.add_css_class("title-2");
     content.append(&heading);
 
+    let mut retry_button = None;
     match &store.status {
         configuration::StoreStatus::Invalid(error) => {
             let recovery = gtk::Label::builder()
                 .label(error.message())
                 .xalign(0.0)
                 .wrap(true)
+                .selectable(true)
                 .build();
             recovery.add_css_class("error");
             recovery.update_property(&[gtk::accessible::Property::Description(
@@ -106,12 +108,19 @@ pub fn present(application: &adw::Application, session: PickerSession, store: Co
             content.append(&recovery);
             let hint = gtk::Label::builder()
                 .label(i18n::text(
-                    "The invalid file was left unchanged. Enable destinations and save to replace it. Independently discovered browsers are listed below.",
+                    "The invalid or unusable configuration path was left unchanged. Retry after repairing ownership, permissions, or the symlink, or enable destinations and save to replace a readable invalid file. Independently discovered browsers are listed below.",
                 ))
                 .xalign(0.0)
                 .wrap(true)
                 .build();
             content.append(&hint);
+            let retry = gtk::Button::with_mnemonic(&i18n::text("_Retry"));
+            retry.update_property(&[
+                gtk::accessible::Property::Label("Retry"),
+                gtk::accessible::Property::KeyShortcuts("<Alt>r"),
+            ]);
+            content.append(&retry);
+            retry_button = Some(retry);
         }
         configuration::StoreStatus::Migratable(preview) => {
             let recovery = gtk::Label::builder()
@@ -297,6 +306,24 @@ pub fn present(application: &adw::Application, session: PickerSession, store: Co
     window.set_widget_name("destination-setup");
     let store = Rc::new(RefCell::new(store));
     let allow_close = Rc::new(Cell::new(false));
+    if let Some(retry) = retry_button {
+        retry.connect_clicked(glib::clone!(
+            #[weak]
+            application,
+            #[weak]
+            window,
+            #[strong]
+            session,
+            #[strong]
+            allow_close,
+            move |_| {
+                allow_close.set(true);
+                window.set_widget_name("destination-setup-closing");
+                window.close();
+                crate::application::present_setup(&application, &session);
+            }
+        ));
+    }
     let preferred_fallback_mode = existing
         .as_ref()
         .map(|configuration| match configuration.fallback.clone() {

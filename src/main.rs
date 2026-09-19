@@ -139,19 +139,35 @@ fn diagnose_target() -> gtk::glib::ExitCode {
 }
 
 fn validate_configuration() -> gtk::glib::ExitCode {
-    let error = match configuration::inspect() {
-        Ok(configuration::Inspected::Ready(_)) => return gtk::glib::ExitCode::SUCCESS,
-        Ok(configuration::Inspected::Missing) => {
+    let path = match configuration::default_path() {
+        Ok(path) => path,
+        Err(error) => {
+            eprintln!("{}", configuration_error_message(error));
+            return gtk::glib::ExitCode::from(STATUS_CONFIGURATION);
+        }
+    };
+    let store = match configuration::ConfigurationStore::inspect_path(&path) {
+        Ok(store) => store,
+        Err(error) => {
+            eprintln!("{}", configuration_error_message(error));
+            return gtk::glib::ExitCode::from(STATUS_CONFIGURATION);
+        }
+    };
+    for warning in &store.warnings {
+        eprintln!("{warning}");
+    }
+    let error = match store.status {
+        configuration::StoreStatus::Current => return gtk::glib::ExitCode::SUCCESS,
+        configuration::StoreStatus::Missing => {
             configuration::Error::Read(std::io::ErrorKind::NotFound)
         }
-        Ok(configuration::Inspected::Invalid(error)) => error,
-        Ok(configuration::Inspected::Migratable { preview, .. }) => {
+        configuration::StoreStatus::Invalid(error) => error,
+        configuration::StoreStatus::Migratable(preview) => {
             configuration::Error::MigrationRequired {
                 from: preview.from,
                 to: preview.to,
             }
         }
-        Err(error) => error,
     };
     eprintln!("{}", configuration_error_message(error));
     gtk::glib::ExitCode::from(STATUS_CONFIGURATION)

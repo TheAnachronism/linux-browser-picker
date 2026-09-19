@@ -272,6 +272,7 @@ pub enum Error {
     Conflict,
     NotRegularFile,
     NotOwned,
+    BrokenLink,
     Backup(ErrorKind),
 }
 
@@ -461,9 +462,9 @@ impl Error {
             Self::Conflict => i18n::text(
                 "Configuration was changed in another editor. Overwrite to keep this draft after creating a backup.",
             ),
-            Self::NotRegularFile | Self::NotOwned => {
-                i18n::text("Configuration must resolve to a user-owned regular file")
-            }
+            Self::NotRegularFile => i18n::text("Configuration must be a regular file"),
+            Self::NotOwned => i18n::text("Configuration is not owned by the current user"),
+            Self::BrokenLink => i18n::text("Configuration symlink is broken"),
             Self::Backup(ErrorKind::PermissionDenied) => {
                 i18n::text("Configuration backup permission was denied")
             }

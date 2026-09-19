@@ -51,7 +51,9 @@ fn write_raw_config(config_home: &TempDir, source: &str) {
 fn wait_for_file(path: &std::path::Path) -> String {
     let deadline = Instant::now() + Duration::from_secs(2);
     while Instant::now() < deadline {
-        if let Ok(contents) = fs::read_to_string(path) {
+        if let Ok(contents) = fs::read_to_string(path)
+            && !contents.is_empty()
+        {
             return contents;
         }
         thread::sleep(Duration::from_millis(10));
@@ -219,6 +221,32 @@ fn invalid_toml_fails_closed_without_using_a_subset() {
         fs::read_to_string(config_home.path().join("browser-picker/config.toml")).unwrap(),
         source
     );
+}
+
+#[test]
+fn unusable_configuration_path_fails_closed_without_dispatch() {
+    let config_home = TempDir::new().expect("temporary configuration home should be created");
+    let config_dir = config_home.path().join("browser-picker");
+    fs::create_dir_all(&config_dir).expect("configuration directory should be writable");
+    let path = config_dir.join("config.toml");
+    fs::create_dir(&path).expect("directory target should be created");
+    let received = config_home.path().join("received-argv");
+
+    let output = browser_picker(&config_home)
+        .env("BROWSER_PICKER_TEST_OUTPUT", &received)
+        .arg("https://example.com/?secret=do-not-print")
+        .output()
+        .expect("Browser Picker should start");
+
+    assert_eq!(output.status.code(), Some(3));
+    assert!(
+        received.exists().not(),
+        "automatic routing must stay disabled"
+    );
+    let stderr = String::from_utf8(output.stderr).expect("error output should be UTF-8");
+    assert_eq!(stderr, "Configuration must be a regular file\n");
+    assert!(!stderr.contains("secret"));
+    assert!(path.is_dir());
 }
 
 #[test]

@@ -71,6 +71,11 @@ fn write_valid_config(config_home: &TempDir) {
         ),
     )
     .expect("configuration should be writable");
+    fs::set_permissions(
+        config_dir.join("config.toml"),
+        fs::Permissions::from_mode(0o600),
+    )
+    .expect("valid configuration should be owner-only");
 }
 
 #[test]
@@ -205,6 +210,11 @@ fn validate_reports_invalid_configuration_without_revealing_an_open_target() {
         "version = 1\nthis is not [[toml\n",
     )
     .expect("configuration should be writable");
+    fs::set_permissions(
+        config_dir.join("config.toml"),
+        fs::Permissions::from_mode(0o600),
+    )
+    .expect("invalid configuration should stay owner-only");
 
     let output = browser_picker_with_config(&config_home)
         .arg("validate")
@@ -216,6 +226,74 @@ fn validate_reports_invalid_configuration_without_revealing_an_open_target() {
     assert!(output.stdout.is_empty());
     assert_eq!(stderr, "Configuration is not valid versioned TOML\n");
     assert!(!stderr.contains("secret"));
+}
+
+#[test]
+fn validate_warns_about_broad_permissions_without_revealing_query_values() {
+    let config_home = TempDir::new().expect("temporary configuration home should be created");
+    write_valid_config(&config_home);
+    let path = config_home.path().join("browser-picker/config.toml");
+    let source = format!(
+        "{}\n[[rules]]\nid = \"docs\"\nname = \"Docs\"\nenabled = true\n\n[[rules.groups]]\n\n[[rules.groups.conditions]]\ntype = \"query-value\"\nkey = \"q\"\nvalue = \"super-secret-token\"\n\n[rules.action]\ntype = \"preselect\"\ndestination = \"controlled\"\n",
+        fs::read_to_string(&path)
+            .expect("valid configuration should be readable")
+            .trim_end(),
+    );
+    fs::write(&path, &source).expect("configuration should be writable");
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o644))
+        .expect("broad permissions should be set");
+
+    let output = browser_picker_with_config(&config_home)
+        .arg("validate")
+        .output()
+        .expect("Browser Picker should start");
+    let stderr = String::from_utf8(output.stderr).expect("warning output should be UTF-8");
+
+    assert!(output.status.success());
+    assert!(output.stdout.is_empty());
+    assert!(
+        stderr.contains("readable by group or others"),
+        "stderr={stderr}"
+    );
+    assert!(stderr.contains("plain text"), "stderr={stderr}");
+    assert!(!stderr.contains("super-secret-token"));
+    assert!(!stderr.contains("q="));
+    assert_eq!(
+        fs::read_to_string(&path).expect("file should remain"),
+        source
+    );
+}
+
+#[test]
+fn validate_reports_unusable_configuration_paths_without_changing_them() {
+    let config_home = TempDir::new().expect("temporary configuration home should be created");
+    let config_dir = config_home.path().join("browser-picker");
+    fs::create_dir(&config_dir).expect("configuration directory should be writable");
+    let path = config_dir.join("config.toml");
+    fs::create_dir(&path).expect("directory target should be created");
+
+    let output = browser_picker_with_config(&config_home)
+        .arg("validate")
+        .output()
+        .expect("Browser Picker should start");
+    let stderr = String::from_utf8(output.stderr).expect("error output should be UTF-8");
+
+    assert_eq!(output.status.code(), Some(3));
+    assert!(output.stdout.is_empty());
+    assert_eq!(stderr, "Configuration must be a regular file\n");
+    assert!(path.is_dir());
+
+    fs::remove_dir(&path).expect("directory target should be removable");
+    std::os::unix::fs::symlink(config_dir.join("missing.toml"), &path)
+        .expect("broken symlink should be created");
+    let output = browser_picker_with_config(&config_home)
+        .arg("validate")
+        .output()
+        .expect("Browser Picker should start");
+    let stderr = String::from_utf8(output.stderr).expect("error output should be UTF-8");
+    assert_eq!(output.status.code(), Some(3));
+    assert_eq!(stderr, "Configuration symlink is broken\n");
+    assert!(path.symlink_metadata().unwrap().file_type().is_symlink());
 }
 
 #[test]
