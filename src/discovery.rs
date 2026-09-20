@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 
 use gtk::gio;
 use gtk::gio::prelude::AppInfoExt;
@@ -7,6 +8,19 @@ use crate::application::ID;
 
 pub const HTTP: &str = "x-scheme-handler/http";
 pub const HTTPS: &str = "x-scheme-handler/https";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LaunchError {
+    NotFound,
+    Failed,
+}
+
+#[derive(Clone, Debug)]
+pub struct BrowserApplication {
+    pub name: String,
+    pub executable: PathBuf,
+    pub icon: Option<gio::Icon>,
+}
 
 #[derive(Clone, Debug)]
 pub struct BrowserCandidate {
@@ -73,7 +87,28 @@ pub fn discover() -> Discovery {
     Discovery { ordinary, partial }
 }
 
-pub fn app_info(desktop_id: &str) -> Option<gio::AppInfo> {
+pub fn application(desktop_id: &str) -> Option<BrowserApplication> {
+    let application = app_info(desktop_id)?;
+    Some(BrowserApplication {
+        name: application.display_name().to_string(),
+        executable: application.executable(),
+        icon: application.icon(),
+    })
+}
+
+pub fn icon(desktop_id: &str) -> Option<gio::Icon> {
+    application(desktop_id).and_then(|application| application.icon)
+}
+
+pub fn launch_uris(desktop_id: &str, uris: &[&str]) -> Result<(), LaunchError> {
+    let application = app_info(desktop_id).ok_or(LaunchError::NotFound)?;
+    application
+        .launch_uris(uris, gio::AppLaunchContext::NONE)
+        .map(|_| ())
+        .map_err(|_| LaunchError::Failed)
+}
+
+fn app_info(desktop_id: &str) -> Option<gio::AppInfo> {
     let mut applications = gio::AppInfo::all_for_type(HTTP);
     applications.extend(gio::AppInfo::all_for_type(HTTPS));
     if let Some(application) = applications
@@ -85,10 +120,6 @@ pub fn app_info(desktop_id: &str) -> Option<gio::AppInfo> {
     gio::AppInfo::all()
         .into_iter()
         .find(|application| application.id().as_deref() == Some(desktop_id))
-}
-
-pub fn icon(desktop_id: &str) -> Option<gio::Icon> {
-    app_info(desktop_id).and_then(|application| application.icon())
 }
 
 pub fn suggested_slug(desktop_id: &str) -> String {

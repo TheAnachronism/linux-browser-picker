@@ -5,7 +5,6 @@ use std::env;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
-use gtk::gio::prelude::AppInfoExt;
 use serde::{Deserialize, Serialize};
 use toml_edit::{DocumentMut, Item};
 
@@ -889,10 +888,12 @@ fn validate_destination(destination: DestinationFile) -> Result<BrowserDestinati
             if desktop_id.trim().is_empty() {
                 return Err(Error::InvalidDesktopId(id));
             }
-            let application_label = discovery::app_info(&desktop_id)
-                .map(|application| application.display_name().to_string())
+            let application = discovery::application(&desktop_id);
+            let application_label = application
+                .as_ref()
+                .map(|application| application.name.clone())
                 .unwrap_or_else(|| desktop_id.clone());
-            let unavailable_reason = if discovery::app_info(&desktop_id).is_none() {
+            let unavailable_reason = if application.is_none() {
                 Some(i18n::text("Browser Application is not installed"))
             } else {
                 None
@@ -980,8 +981,8 @@ fn profile_destination(
     launch: DestinationLaunch,
     identity: &ProfileIdentity,
 ) -> BrowserDestination {
-    let application_label = discovery::app_info(&desktop_id)
-        .map(|application| application.display_name().to_string())
+    let application_label = discovery::application(&desktop_id)
+        .map(|application| application.name)
         .unwrap_or_else(|| desktop_id.clone());
     BrowserDestination {
         id,
@@ -995,8 +996,7 @@ fn profile_destination(
 }
 
 fn profile_unavailability(desktop_id: &str, identity: &ProfileIdentity) -> Option<String> {
-    let application = discovery::app_info(desktop_id);
-    let executable = application.as_ref().map(AppInfoExt::executable);
+    let executable = discovery::application(desktop_id).map(|application| application.executable);
     match profiles::capability(
         desktop_id,
         executable.as_deref(),

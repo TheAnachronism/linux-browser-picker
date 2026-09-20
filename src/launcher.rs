@@ -1,9 +1,6 @@
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-use gtk::gio;
-use gtk::gio::prelude::AppInfoExt;
-
 use crate::configuration::{BrowserDestination, DestinationLaunch};
 use crate::discovery;
 use crate::open_target::OpenTarget;
@@ -59,16 +56,13 @@ pub fn dispatch(
                     reason: FailureReason::UnsupportedPrivate,
                 });
             }
-            let application = discovery::app_info(desktop_id).ok_or_else(|| Error {
+            discovery::launch_uris(desktop_id, &[target.as_str()]).map_err(|error| Error {
                 destination_id: destination.id.clone(),
-                reason: FailureReason::NotFound,
-            })?;
-            application
-                .launch_uris(&[target.as_str()], gio::AppLaunchContext::NONE)
-                .map_err(|_| Error {
-                    destination_id: destination.id.clone(),
-                    reason: FailureReason::Other,
-                })
+                reason: match error {
+                    discovery::LaunchError::NotFound => FailureReason::NotFound,
+                    discovery::LaunchError::Failed => FailureReason::Other,
+                },
+            })
         }
         DestinationLaunch::FirefoxProfile {
             desktop_id,
@@ -111,11 +105,11 @@ fn dispatch_profile(
     target: &OpenTarget,
     private: bool,
 ) -> Result<(), Error> {
-    let application = discovery::app_info(desktop_id).ok_or_else(|| Error {
+    let application = discovery::application(desktop_id).ok_or_else(|| Error {
         destination_id: destination.id.clone(),
         reason: FailureReason::NotFound,
     })?;
-    let executable = application.executable();
+    let executable = application.executable;
     let paths = profiles::DiscoveryPaths::from_env();
     let decision = profiles::decide(desktop_id, Some(&executable), &identity, &paths);
     match decision.capability {

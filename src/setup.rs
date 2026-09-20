@@ -1126,13 +1126,12 @@ fn append_profile_candidates(
     used_ids: &mut HashSet<String>,
     configured_profiles: &HashSet<(String, ProfileIdentity)>,
 ) {
-    let Some(application) = discovery::app_info(&candidate.desktop_id) else {
+    let Some(application) = discovery::application(&candidate.desktop_id) else {
         return;
     };
-    let executable = gtk::gio::prelude::AppInfoExt::executable(&application);
     let Some(assumptions) = profiles::classify(
         &candidate.desktop_id,
-        &executable,
+        &application.executable,
         &profiles::DiscoveryPaths::from_env(),
     ) else {
         return;
@@ -1713,8 +1712,7 @@ fn launch_from_identity(desktop_id: &str, identity: ProfileIdentity) -> Destinat
 }
 
 fn assumptions_for(desktop_id: &str, identity: &ProfileIdentity) -> (Option<String>, bool) {
-    let executable = discovery::app_info(desktop_id)
-        .map(|application| gtk::gio::prelude::AppInfoExt::executable(&application));
+    let executable = discovery::application(desktop_id).map(|application| application.executable);
     let decision = profiles::decide(
         desktop_id,
         executable.as_deref(),
