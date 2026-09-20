@@ -115,8 +115,7 @@ const FAMILY_CANDIDATES: &[FamilyCandidate] = &[
         ids: &[
             "zen",
             "zen-browser",
-            "zen-beta-2",
-            "zen-beta-3",
+            "zen-beta",
             "app.zen_browser.zen",
         ],
         family: BrowserFamily::Firefox,
@@ -671,6 +670,14 @@ mod tests {
                 "--private-window",
             ),
             (
+                "zen-beta.desktop",
+                "/usr/bin/zen-beta",
+                "Zen",
+                BrowserFamily::Firefox,
+                "/home/user/.zen",
+                "--private-window",
+            ),
+            (
                 "chromium.desktop",
                 "/usr/bin/chromium",
                 "Chromium",
@@ -788,18 +795,21 @@ mod tests {
             home: PathBuf::from("/home/user"),
             config_home: PathBuf::from("/home/user/.config"),
         };
-        for desktop_id in ["zen-beta-2.desktop", "zen-beta-3.desktop"] {
-            let assumptions = classify(desktop_id, Path::new("/usr/bin/zen"), &paths)
-                .unwrap_or_else(|| panic!("{desktop_id} should use the Firefox-family adapter"));
-            assert_eq!(assumptions.family, BrowserFamily::Firefox, "{desktop_id}");
-            assert_eq!(assumptions.product, "Zen", "{desktop_id}");
-            assert_eq!(
-                assumptions.profile_root,
-                Path::new("/home/user/.zen"),
-                "{desktop_id}"
-            );
-            assert_eq!(assumptions.private_flag, "--private-window", "{desktop_id}");
-        }
+        let assumptions = classify("zen-beta.desktop", Path::new("/usr/bin/zen-beta"), &paths)
+            .expect("current primary Zen should use the Firefox-family adapter");
+        assert_eq!(assumptions.family, BrowserFamily::Firefox);
+        assert_eq!(assumptions.product, "Zen");
+        assert_eq!(assumptions.profile_root, Path::new("/home/user/.zen"));
+        assert_eq!(assumptions.private_flag, "--private-window");
+        assert_eq!(
+            classify(
+                "zen-secondary.desktop",
+                Path::new("/usr/bin/zen-secondary"),
+                &paths
+            ),
+            None,
+            "custom-profile Zen wrappers stay generic destinations"
+        );
         assert_eq!(
             classify(
                 "zen-twilight.desktop",
@@ -892,7 +902,7 @@ mod tests {
         assert!(sandboxed.assumptions.is_none());
 
         let zen = decide(
-            "zen-beta-2.desktop",
+            "zen-beta.desktop",
             Some(executable.as_path()),
             &identity,
             &paths,

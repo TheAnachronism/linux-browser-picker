@@ -1479,13 +1479,13 @@ fn chromium_profile_destination_launches_with_user_data_root_and_profile_id() {
 fn zen_profile_destination_launches_with_firefox_family_argv() {
     let config_home = TempDir::new().expect("temporary configuration home should be created");
     let executable = install_fake_browser(&config_home);
-    let data_home = install_family_desktop(&config_home, "zen-beta-2.desktop", "Zen", &executable);
+    let data_home = install_family_desktop(&config_home, "zen-beta.desktop", "Zen", &executable);
     let profile = config_home.path().join("zen-work");
     fs::create_dir(&profile).expect("Zen profile should exist");
     write_raw_config(
         &config_home,
         &format!(
-            "version = 1\n\n[[destinations]]\nid = \"zen-work\"\nlabel = \"Work Zen\"\nprofile_label = \"Work\"\n\n[destinations.application]\ntype = \"firefox-profile\"\ndesktop_id = \"zen-beta-2.desktop\"\nname = \"Work\"\npath = \"{}\"\n\n[fallback]\naction = \"open\"\ndestination = \"zen-work\"\n",
+            "version = 1\n\n[[destinations]]\nid = \"zen-work\"\nlabel = \"Work Zen\"\nprofile_label = \"Work\"\n\n[destinations.application]\ntype = \"firefox-profile\"\ndesktop_id = \"zen-beta.desktop\"\nname = \"Work\"\npath = \"{}\"\n\n[fallback]\naction = \"open\"\ndestination = \"zen-work\"\n",
             profile.display()
         ),
     );
