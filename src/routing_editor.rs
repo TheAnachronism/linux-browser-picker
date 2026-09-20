@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
 use std::rc::Rc;
 
@@ -97,6 +97,7 @@ pub struct RoutingRuleEditor {
     pub explanation: gtk::Label,
     list: gtk::ListBox,
     rules: Rc<RefCell<Vec<RuleWidgets>>>,
+    destination_choices: Rc<RefCell<Vec<(String, String)>>>,
     on_change: ChangeCallback,
 }
 
@@ -107,10 +108,17 @@ struct RuleWidgets {
     name: gtk::Entry,
     action: gtk::DropDown,
     destination: gtk::Entry,
+    destination_helper: DestinationChoiceHelper,
     mode: gtk::DropDown,
     groups: Rc<RefCell<Vec<GroupWidgets>>>,
     drag_handle: gtk::Widget,
     row: gtk::ListBoxRow,
+}
+
+#[derive(Clone)]
+struct DestinationChoiceHelper {
+    dropdown: gtk::DropDown,
+    updating: Rc<Cell<bool>>,
 }
 
 #[derive(Clone)]
@@ -181,8 +189,9 @@ impl RoutingRuleEditor {
             "Ordered Routing Rules",
         ))]);
         let rules = Rc::new(RefCell::new(Vec::new()));
+        let destination_choices = Rc::new(RefCell::new(Vec::new()));
         for rule in existing {
-            let widgets = build_rule(rule.clone(), &on_change);
+            let widgets = build_rule(rule.clone(), &on_change, &destination_choices);
             list.append(&widgets.row);
             rules.borrow_mut().push(widgets);
         }
@@ -260,6 +269,8 @@ impl RoutingRuleEditor {
             on_change,
             #[strong]
             on_drop,
+            #[strong]
+            destination_choices,
             move |_| {
                 let number = rules.borrow().len() + 1;
                 let condition = UrlCondition::Host {
@@ -281,7 +292,7 @@ impl RoutingRuleEditor {
                         mode: LaunchMode::Normal,
                     },
                 };
-                let widgets = build_rule(rule, &on_change);
+                let widgets = build_rule(rule, &on_change, &destination_choices);
                 reorder_ui::attach_row_drag(
                     &widgets.row,
                     &widgets.drag_handle,
@@ -368,6 +379,7 @@ impl RoutingRuleEditor {
             explanation,
             list,
             rules,
+            destination_choices,
             on_change,
         }
     }
@@ -378,6 +390,13 @@ impl RoutingRuleEditor {
 
     pub fn connect_changed(&self, callback: impl Fn() + 'static) {
         *self.on_change.borrow_mut() = Some(Rc::new(callback));
+    }
+
+    pub fn set_destination_choices(&self, choices: &[(String, String)]) {
+        *self.destination_choices.borrow_mut() = choices.to_vec();
+        for rule in self.rules.borrow().iter() {
+            fill_destination_choice_dropdown(&rule.destination_helper, &rule.destination, choices);
+        }
     }
 
     pub fn rewrite_destination_id(&self, from: &str, to: &str) {
@@ -494,7 +513,11 @@ pub fn explanation_text(evaluation: &RoutingEvaluation) -> String {
     lines.join("\n")
 }
 
-fn build_rule(rule: RoutingRule, on_change: &ChangeCallback) -> RuleWidgets {
+fn build_rule(
+    rule: RoutingRule,
+    on_change: &ChangeCallback,
+    destination_choices: &Rc<RefCell<Vec<(String, String)>>>,
+) -> RuleWidgets {
     let enabled = gtk::CheckButton::with_label(&i18n::text("Enabled"));
     enabled.set_active(rule.enabled);
     bind_toggle(&enabled, on_change);
@@ -517,6 +540,7 @@ fn build_rule(rule: RoutingRule, on_change: &ChangeCallback) -> RuleWidgets {
         &i18n::text("Action Browser Destination ID"),
         on_change,
     );
+    let destination_helper = destination_choice_helper(&destination, destination_choices);
     let normal = i18n::text("Normal");
     let private = i18n::text("Private");
     let mode = dropdown(
@@ -530,17 +554,19 @@ fn build_rule(rule: RoutingRule, on_change: &ChangeCallback) -> RuleWidgets {
         0
     });
 
-    let header = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    let identity = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     let drag_handle = reorder_ui::prepend_handle(
-        &header,
+        &identity,
         &i18n::text_with("Reorder {name}", &[("{name}", &rule.name)]),
     );
-    header.append(&enabled);
-    header.append(&id);
-    header.append(&name);
-    header.append(&action);
-    header.append(&destination);
-    header.append(&mode);
+    identity.append(&enabled);
+    identity.append(&id);
+    identity.append(&name);
+    let action_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    action_row.append(&action);
+    action_row.append(&destination);
+    action_row.append(&destination_helper.dropdown);
+    action_row.append(&mode);
 
     let groups_box = gtk::Box::new(gtk::Orientation::Vertical, 6);
     let groups = Rc::new(RefCell::new(Vec::new()));
@@ -584,7 +610,8 @@ fn build_rule(rule: RoutingRule, on_change: &ChangeCallback) -> RuleWidgets {
     body.set_margin_bottom(9);
     body.set_margin_start(9);
     body.set_margin_end(9);
-    body.append(&header);
+    body.append(&identity);
+    body.append(&action_row);
     body.append(&groups_box);
     body.append(&add_group);
     let row = gtk::ListBoxRow::builder()
@@ -599,6 +626,7 @@ fn build_rule(rule: RoutingRule, on_change: &ChangeCallback) -> RuleWidgets {
         name,
         action,
         destination,
+        destination_helper,
         mode,
         groups,
         drag_handle,
@@ -982,4 +1010,76 @@ fn dropdown(values: &[&str], label: &str, on_change: &ChangeCallback) -> gtk::Dr
         move |_| notify_change(&on_change)
     ));
     dropdown
+}
+
+fn destination_choice_helper(
+    destination: &gtk::Entry,
+    choices: &Rc<RefCell<Vec<(String, String)>>>,
+) -> DestinationChoiceHelper {
+    let helper = DestinationChoiceHelper {
+        dropdown: gtk::DropDown::from_strings(&[]),
+        updating: Rc::new(Cell::new(false)),
+    };
+    helper
+        .dropdown
+        .update_property(&[
+            gtk::accessible::Property::Label(&i18n::text("Choose an enabled Browser Destination")),
+            gtk::accessible::Property::Description(&i18n::text(
+                "Choose an enabled Browser Destination",
+            )),
+        ]);
+    fill_destination_choice_dropdown(&helper, destination, &choices.borrow());
+    helper.dropdown.connect_selected_notify(glib::clone!(
+        #[weak]
+        destination,
+        #[strong]
+        choices,
+        #[strong]
+        helper,
+        move |dropdown| {
+            if helper.updating.get() {
+                return;
+            }
+            if let Some((id, _)) = choices.borrow().get(dropdown.selected() as usize) {
+                destination.set_text(id);
+            }
+        }
+    ));
+    destination.connect_changed(glib::clone!(
+        #[strong]
+        helper,
+        #[strong]
+        choices,
+        move |destination| {
+            sync_destination_choice(&helper, destination.text().as_str(), &choices.borrow());
+        }
+    ));
+    helper
+}
+
+fn fill_destination_choice_dropdown(
+    helper: &DestinationChoiceHelper,
+    destination: &gtk::Entry,
+    choices: &[(String, String)],
+) {
+    helper.updating.set(true);
+    let labels: Vec<_> = choices.iter().map(|(_, label)| label.as_str()).collect();
+    helper
+        .dropdown
+        .set_model(Some(&gtk::StringList::new(&labels)));
+    helper.dropdown.set_sensitive(!choices.is_empty());
+    sync_destination_choice(helper, destination.text().as_str(), choices);
+    helper.updating.set(false);
+}
+
+fn sync_destination_choice(
+    helper: &DestinationChoiceHelper,
+    destination_id: &str,
+    choices: &[(String, String)],
+) {
+    let selected = choices
+        .iter()
+        .position(|(id, _)| id == destination_id.trim())
+        .map_or(gtk::INVALID_LIST_POSITION, |index| index as u32);
+    helper.dropdown.set_selected(selected);
 }

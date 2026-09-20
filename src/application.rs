@@ -432,8 +432,20 @@ fn open_configuration_store() -> Result<configuration::ConfigurationStore, confi
 }
 
 pub(crate) fn present_setup(application: &adw::Application, session: &PickerSession) {
+    present_setup_page(application, session, setup::InitialPage::Destinations);
+}
+
+fn present_routing_setup(application: &adw::Application, session: &PickerSession) {
+    present_setup_page(application, session, setup::InitialPage::Rules);
+}
+
+fn present_setup_page(
+    application: &adw::Application,
+    session: &PickerSession,
+    initial_page: setup::InitialPage,
+) {
     match open_configuration_store() {
-        Ok(store) => setup::present(application, session.clone(), store),
+        Ok(store) => setup::present(application, session.clone(), store, initial_page),
         Err(error) => show_configuration_recovery(application, session, error.message()),
     }
 }
@@ -770,7 +782,7 @@ pub(crate) fn show_picker(application: &adw::Application, session: PickerSession
         application,
         #[strong]
         session,
-        move |_| present_setup(&application, &session)
+        move |_| present_routing_setup(&application, &session)
     ));
     content.append(&edit_rules);
     let repair_configuration = gtk::Button::with_mnemonic(&i18n::text("_Repair configuration"));
@@ -1130,7 +1142,7 @@ pub(crate) fn show_picker(application: &adw::Application, session: PickerSession
         application,
         #[strong]
         session,
-        move |_, _| present_setup(&application, &session)
+        move |_, _| present_routing_setup(&application, &session)
     ));
     window.add_action(&edit_routing);
     application.set_accels_for_action("win.edit-routing", &["<Alt>e"]);

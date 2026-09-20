@@ -931,3 +931,15 @@ msgstr "Configuration"
 
 msgid "Configuration migration"
 msgstr "Configuration migration"
+
+msgid "Destinations"
+msgstr "Destinations"
+
+msgid "Rules"
+msgstr "Rules"
+
+msgid "General"
+msgstr "General"
+
+msgid "Choose an enabled Browser Destination"
+msgstr "Choose an enabled Browser Destination"

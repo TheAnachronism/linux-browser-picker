@@ -729,8 +729,27 @@ def choose_combo(name: str, value: str, last: bool = False) -> None:
         time.sleep(0.1)
     if not popover_open():
         raise SystemExit(f"combo {name!r} did not open\n{tree_text()}")
-    if value == "Open automatically":
+    options = [
+        item
+        for item, _depth in walk(desktop())
+        if node_role(item) == "list item"
+        and not node_name(item)
+        and "showing" in node_states(item)
+    ]
+    target_index = next(
+        (index for index, item in enumerate(options) if descendant_has_name(item, value)),
+        None,
+    )
+    if target_index is not None:
         send_key(window, "Home")
+        for _index in range(target_index):
+            send_key(window, "Down")
+    elif name == "Show Picker" and value == "Open automatically":
+        send_key(window, "Down")
+    elif value == "Open automatically":
+        send_key(window, "Home")
+    elif name == "Show Picker":
+        send_key(window, "End")
     else:
         send_key(window, "End")
     time.sleep(0.2)
@@ -740,28 +759,31 @@ def choose_combo(name: str, value: str, last: bool = False) -> None:
     last_tree = ""
     while time.time() < deadline:
         last_tree = tree_text()
-        if combo_has_value(value, last=last):
+        actual = node_attributes(node).get("valuetext") or node_name(node)
+        if actual == value:
+            return
+        if combo_has_value(name, value, last=last):
             return
         time.sleep(0.15)
     raise SystemExit(f"could not choose {value!r} from {name!r}\n{last_tree}")
 
-def combo_has_value(value: str, last: bool = False) -> bool:
-    for node in iter_nodes():
-        if node_role(node) == "combo box":
-            actual = node_attributes(node).get("valuetext") or node_name(node)
-            if actual == value:
-                return True
-        if node_role(node) != "list item":
-            continue
-        if not node_name(node).startswith("Route "):
-            continue
-        for descendant, _depth in walk(node):
-            if node_role(descendant) != "combo box":
-                continue
-            actual = node_attributes(descendant).get("valuetext") or node_name(descendant)
-            if actual == value:
-                return True
-    return False
+def combo_has_value(name: str, value: str, last: bool = False) -> bool:
+    combos = [
+        item
+        for item in iter_nodes()
+        if node_role(item) == "combo box"
+        and "showing" in node_states(item)
+        and (
+            node_name(item) == name
+            or node_attributes(item).get("valuetext") == name
+            or node_attributes(item).get("valuetext") == value
+        )
+    ]
+    if not combos:
+        return False
+    item = combos[-1] if last else combos[0]
+    actual = node_attributes(item).get("valuetext") or node_name(item)
+    return actual == value
 
 
 def descendant_has_name(node: Atspi.Accessible, value: str, depth: int = 0) -> bool:
@@ -819,18 +841,23 @@ def require_named_binding(
     shortcut: str | None,
     description: str | None = None,
     showing: bool | None = None,
+    last: bool = False,
 ) -> None:
     deadline = time.time() + 8
-    last = ""
+    last_tree = ""
+    from_last = last
     while time.time() < deadline:
         haystack = tree_text()
-        last = haystack
+        last_tree = haystack
         found_showing = False
-        for node in iter_nodes():
-            if node_name(node) != name:
-                continue
-            if role is not None and node_role(node) != role:
-                continue
+        candidates = [
+            node
+            for node in iter_nodes()
+            if node_name(node) == name and (role is None or node_role(node) == role)
+        ]
+        if from_last:
+            candidates = list(reversed(candidates))
+        for node in candidates[:1] if from_last else candidates:
             if description is not None and node_description(node) != description:
                 continue
             states = node_states(node)
@@ -861,7 +888,7 @@ def require_named_binding(
         "no accessible bound "
         f"name={name!r} role={role!r} enabled={enabled!r} "
         f"selected={selected} focused={focused} shortcut={shortcut!r} "
-        f"description={description!r} showing={showing!r}\n{last}"
+        f"description={description!r} showing={showing!r} last={from_last!r}\n{last_tree}"
     )
 
 
@@ -972,6 +999,7 @@ def main() -> None:
             args.shortcut,
             args.description,
             showing,
+            args.last,
         )
         return
     assert_names(args.values)

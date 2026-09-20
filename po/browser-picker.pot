@@ -867,3 +867,15 @@ msgstr ""
 
 msgid "Configuration migration"
 msgstr ""
+
+msgid "Destinations"
+msgstr ""
+
+msgid "Rules"
+msgstr ""
+
+msgid "General"
+msgstr ""
+
+msgid "Choose an enabled Browser Destination"
+msgstr ""

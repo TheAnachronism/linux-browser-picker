@@ -149,6 +149,14 @@ EOF
 
                       test -n "$window"
                       test "$(xdotool getwindowname "$window")" = "Browser Picker"
+                      for attempt in $(seq 1 100); do
+                        gdbus introspect \
+                          --session \
+                          --dest io.github.TheAnachronism.BrowserPicker \
+                          --object-path /io/github/TheAnachronism/BrowserPicker \
+                          >/dev/null 2>/dev/null && break
+                        sleep 0.1
+                      done
                       gdbus introspect \
                         --session \
                         --dest io.github.TheAnachronism.BrowserPicker \
@@ -356,8 +364,8 @@ file://$queued"
                       xdotool windowfocus --sync "$window"
                       xdotool key --clearmodifiers space
                       sleep 0.2
-                      python3 "$inspect" focus "Show Picker"
-                      xdotool key --clearmodifiers space Down Return
+                      python3 "$inspect" activate "General"
+                      python3 "$inspect" combo "Show Picker" "Open AAA Controlled Browser" --last
                       xdotool key --clearmodifiers alt+s
                       for attempt in $(seq 1 100); do
                         test ! -f "$XDG_CONFIG_HOME/browser-picker/config.toml" || break
@@ -938,8 +946,8 @@ https://automatic.example/live"
                       done
                       set -- $(xdotool search --onlyvisible --name "^Browser Picker$" 2>/dev/null || true)
                       test "$#" -ge 2
-                      python3 "$inspect" focus "Show Picker"
-                      xdotool key --clearmodifiers space Down Down Return
+                      python3 "$inspect" activate "General"
+                      python3 "$inspect" combo "Show Picker" "Open Work Browser" --last
                       xdotool key --clearmodifiers alt+s
                       for attempt in $(seq 1 100); do
                         grep -A3 "^\[fallback\]$" "$XDG_CONFIG_HOME/browser-picker/config.toml" | grep -q "destination = \"controlled\"" && break
@@ -1127,8 +1135,8 @@ EOF
                       xdotool type -- "--private"
                       xdotool key Return
                       xdotool type -- "{target}"
-                      python3 "$inspect" focus "Show Picker"
-                      xdotool key --clearmodifiers space Down Return
+                      python3 "$inspect" activate "General"
+                      python3 "$inspect" combo "Show Picker" "Open Graphical Manual Browser" --last
                       xdotool key --clearmodifiers alt+s
 
                       for attempt in $(seq 1 100); do
@@ -1251,10 +1259,12 @@ EOF
                       done
                       test -n "$window"
                       echo "reference-safe: window ready" >&2
+                      python3 "$inspect" activate "Rules"
                       python3 "$inspect" assert \
                         "Remove Routing Rule" \
                         "Remove OR group" \
                         "Remove AND condition"
+                      python3 "$inspect" activate "Destinations"
                       python3 "$inspect" disabled "Enable Browser Candidate Work Browser"
                       python3 "$inspect" checked "Enable Browser Candidate Work Browser"
                       python3 "$inspect" focus "Browser Destination ID"
@@ -1272,20 +1282,22 @@ EOF
                       grep -A3 "^\[fallback\]$" "$config" | grep -q "destination = \"renamed-work\"" || { echo "fallback was not rewritten"; cat "$config"; exit 1; }
                       grep -q "id = \"work\"" "$config" && { echo "old destination id remained"; cat "$config"; exit 1; } || true
                       echo "reference-safe: renamed" >&2
-                      python3 "$inspect" activate "Open Work Browser"
-                      python3 "$inspect" wait "Show Picker"
-                      python3 "$inspect" activate "Show Picker"
-                      xdotool key --clearmodifiers Home Return
+                      python3 "$inspect" activate "General"
+                      python3 "$inspect" combo "Open Work Browser" "Show Picker" --last
                       sleep 0.2
+                      python3 "$inspect" activate "Destinations"
                       python3 "$inspect" disabled "Enable Browser Candidate Work Browser"
+                      python3 "$inspect" activate "Rules"
                       python3 "$inspect" pointer "Routing Rule ID"
                       python3 "$inspect" activate "Remove Routing Rule"
                       sleep 0.2
                       python3 "$inspect" pointer "Action Browser Destination ID"
                       xdotool key --clearmodifiers ctrl+a
                       xdotool type "spare"
+                      python3 "$inspect" activate "Destinations"
                       python3 "$inspect" enabled "Enable Browser Candidate Work Browser"
                       python3 "$inspect" checked "Enable Browser Candidate Work Browser"
+                      python3 "$inspect" activate "Rules"
                       python3 "$inspect" activate "Remove OR group"
                       sleep 0.2
                       python3 "$inspect" activate "Remove AND condition"

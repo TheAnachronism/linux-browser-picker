@@ -499,10 +499,12 @@ run_configuration_reorder_and_unsaved() {
   inspect wait "Configuration" --timeout 20
   inspect node "Move destination up" --role "button" --enabled --shortcut "<Alt><Shift>Up"
   inspect node "Move destination down" --role "button" --enabled --shortcut "<Alt><Shift>Down"
+  xdotool windowfocus --sync "$window"
+  xdotool key --clearmodifiers alt+shift+Down
+  inspect activate "Rules"
   inspect node "Move Routing Rule up" --role "button" --enabled --shortcut "<Alt>Up"
   inspect node "Move Routing Rule down" --role "button" --enabled --shortcut "<Alt>Down"
   xdotool windowfocus --sync "$window"
-  xdotool key --clearmodifiers alt+shift+Down
   xdotool key --clearmodifiers alt+Down
   xdotool key --clearmodifiers alt+s
   for attempt in $(seq 1 50); do
@@ -518,10 +520,11 @@ run_configuration_reorder_and_unsaved() {
     rules=later,suggested,automatic \
     fallback.action=show-picker \
     version=1
-  inspect node "Move destination up" --role "button" --enabled --shortcut "<Alt><Shift>Up"
-  inspect node "Move destination down" --role "button" --enabled --shortcut "<Alt><Shift>Down"
   inspect node "Move Routing Rule up" --role "button" --enabled --shortcut "<Alt>Up"
   inspect node "Move Routing Rule down" --role "button" --enabled --shortcut "<Alt>Down"
+  inspect activate "Destinations"
+  inspect node "Move destination up" --role "button" --enabled --shortcut "<Alt><Shift>Up"
+  inspect node "Move destination down" --role "button" --enabled --shortcut "<Alt><Shift>Down"
 
   xdotool windowfocus --sync "$window"
   inspect focus "Browser Destination display label"
@@ -572,13 +575,8 @@ run_contextual_rule_and_saved_routing() {
   inspect activate "Add Routing Rule"
   inspect wait "Route $host"
   inspect node "Route $host" --role "list item" --showing
-  set -- $(xdotool search --onlyvisible --name "^Browser Picker$" 2>/dev/null || true)
-  xdotool windowfocus --sync "${!#}" || true
-  sleep 0.3
-  xdotool key --clearmodifiers Tab Tab Tab
-  sleep 0.2
-  xdotool key --clearmodifiers ctrl+a
-  xdotool type "controlled"
+  inspect node "Alpha Browser" --role "combo box" --enabled --description "Choose an enabled Browser Destination" --last
+  inspect combo "Alpha Browser" "Work Browser" --last
   inspect combo "Preselect in Picker" "Open automatically" --last
   inspect node "Open automatically" --role "combo box"
 
@@ -697,6 +695,7 @@ EOF
   inspect set-text -- "Browser Application label" "Graphical Browser Application"
   inspect set-text -- "Manual executable" "$TMPDIR/graphical-browser-${tag}"
   inspect set-text -- "Normal literal arguments" $'--graphical\n{target}'
+  inspect activate "General"
   inspect tab-to "Show Picker"
   inspect combo "Show Picker" "Open $selection"
   inspect node "Save configuration" --role "button" --enabled --shortcut "<Alt>s"
@@ -784,6 +783,7 @@ PY
   window=$(wait_window)
   xdotool windowfocus --sync "$window"
   inspect wait "Configuration" --timeout 20
+  inspect activate "Rules"
   inspect node "Remove AND condition" --role "button" --enabled
   inspect activate "Remove AND condition"
   inspect wait "condition groups must not be empty"

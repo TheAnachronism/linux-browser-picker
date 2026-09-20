@@ -23,6 +23,12 @@ use crate::reorder_ui;
 use crate::routing;
 use crate::routing_editor::{self, RoutingRuleEditor};
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum InitialPage {
+    Destinations,
+    Rules,
+}
+
 #[derive(Clone)]
 struct ManualEditor {
     root: gtk::Box,
@@ -47,7 +53,12 @@ struct EditorItem {
     row: gtk::ListBoxRow,
 }
 
-pub fn present(application: &adw::Application, session: PickerSession, store: ConfigurationStore) {
+pub fn present(
+    application: &adw::Application,
+    session: PickerSession,
+    store: ConfigurationStore,
+    initial_page: InitialPage,
+) {
     let pending = Rc::clone(&session.pending);
     let existing = store.configuration.clone();
     session.set_configuration_open(true);
@@ -82,18 +93,28 @@ pub fn present(application: &adw::Application, session: PickerSession, store: Co
     ));
     let first_run = existing.is_none();
 
-    let content = gtk::Box::new(gtk::Orientation::Vertical, 12);
-    content.set_margin_top(18);
-    content.set_margin_bottom(18);
-    content.set_margin_start(18);
-    content.set_margin_end(18);
+    let destinations_content = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    destinations_content.set_margin_top(18);
+    destinations_content.set_margin_bottom(18);
+    destinations_content.set_margin_start(18);
+    destinations_content.set_margin_end(18);
+    let routing_content = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    routing_content.set_margin_top(18);
+    routing_content.set_margin_bottom(18);
+    routing_content.set_margin_start(18);
+    routing_content.set_margin_end(18);
+    let general_content = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    general_content.set_margin_top(18);
+    general_content.set_margin_bottom(18);
+    general_content.set_margin_start(18);
+    general_content.set_margin_end(18);
 
     let heading = gtk::Label::builder()
         .label(i18n::text("Choose Browser Destinations"))
         .xalign(0.0)
         .build();
     heading.add_css_class("title-2");
-    content.append(&heading);
+    destinations_content.append(&heading);
 
     let mut retry_button = None;
     match &store.status {
@@ -108,7 +129,7 @@ pub fn present(application: &adw::Application, session: PickerSession, store: Co
             recovery.update_property(&[gtk::accessible::Property::Description(&i18n::text(
                 "Configuration recovery error",
             ))]);
-            content.append(&recovery);
+            destinations_content.append(&recovery);
             let hint = gtk::Label::builder()
                 .label(i18n::text(
                     "The invalid or unusable configuration path was left unchanged. Retry after repairing ownership, permissions, or the symlink, or enable destinations and save to replace a readable invalid file. Independently discovered browsers are listed below.",
@@ -116,13 +137,13 @@ pub fn present(application: &adw::Application, session: PickerSession, store: Co
                 .xalign(0.0)
                 .wrap(true)
                 .build();
-            content.append(&hint);
+            destinations_content.append(&hint);
             let retry = gtk::Button::with_mnemonic(&i18n::text("_Retry"));
             retry.update_property(&[
                 gtk::accessible::Property::Label(&i18n::text("Retry")),
                 gtk::accessible::Property::KeyShortcuts("<Alt>r"),
             ]);
-            content.append(&retry);
+            destinations_content.append(&retry);
             retry_button = Some(retry);
         }
         configuration::StoreStatus::Migratable(preview) => {
@@ -134,7 +155,7 @@ pub fn present(application: &adw::Application, session: PickerSession, store: Co
             recovery.update_property(&[gtk::accessible::Property::Description(&i18n::text(
                 "Configuration migration preview",
             ))]);
-            content.append(&recovery);
+            destinations_content.append(&recovery);
         }
         _ => {}
     }
@@ -147,7 +168,7 @@ pub fn present(application: &adw::Application, session: PickerSession, store: Co
             .xalign(0.0)
             .wrap(true)
             .build();
-        content.append(&waiting);
+        destinations_content.append(&waiting);
         let host = gtk::Label::builder()
             .label(target.target.title())
             .xalign(0.0)
@@ -157,7 +178,7 @@ pub fn present(application: &adw::Application, session: PickerSession, store: Co
         host.update_property(&[gtk::accessible::Property::Description(&i18n::text(
             "Waiting Open Target",
         ))]);
-        content.append(&host);
+        destinations_content.append(&host);
     }
 
     let list = gtk::ListBox::new();
@@ -177,7 +198,7 @@ pub fn present(application: &adw::Application, session: PickerSession, store: Co
         .vexpand(true)
         .hscrollbar_policy(gtk::PolicyType::Never)
         .build();
-    content.append(&scroller);
+    destinations_content.append(&scroller);
 
     let order = gtk::Box::new(gtk::Orientation::Horizontal, 9);
     let move_up = gtk::Button::from_icon_name("go-up-symbolic");
@@ -202,8 +223,8 @@ pub fn present(application: &adw::Application, session: PickerSession, store: Co
         "Refresh Browser Profiles",
     ))]);
     order.append(&refresh);
-    content.append(&order);
-    content.append(&rule_editor.root);
+    destinations_content.append(&order);
+    routing_content.append(&rule_editor.root);
     let query_warning = gtk::Label::builder()
         .label(i18n::text(
             "Exact query values are stored as plain text in the configuration file. Browser Picker does not use a secret service.",
@@ -215,7 +236,7 @@ pub fn present(application: &adw::Application, session: PickerSession, store: Co
     query_warning.update_property(&[gtk::accessible::Property::Description(&i18n::text(
         "Exact query values are stored as plain text",
     ))]);
-    content.append(&query_warning);
+    routing_content.append(&query_warning);
 
     if !discovery.partial.is_empty() {
         let expander = gtk::Expander::with_mnemonic(&i18n::text("_Partial handlers"));
@@ -237,32 +258,39 @@ pub fn present(application: &adw::Application, session: PickerSession, store: Co
             diagnostics.append(&label);
         }
         expander.set_child(Some(&diagnostics));
-        content.append(&expander);
+        destinations_content.append(&expander);
     }
+
+    let general_heading = gtk::Label::builder()
+        .label(i18n::text("General"))
+        .xalign(0.0)
+        .build();
+    general_heading.add_css_class("title-2");
+    general_content.append(&general_heading);
 
     let fallback_label = gtk::Label::builder()
         .label(i18n::text("Fallback Action"))
         .xalign(0.0)
         .build();
-    content.append(&fallback_label);
+    general_content.append(&fallback_label);
     let show_picker_label = i18n::text("Show Picker");
     let fallback = gtk::DropDown::from_strings(&[&show_picker_label]);
     fallback.update_property(&[gtk::accessible::Property::Label(&i18n::text(
         "Fallback Action",
     ))]);
     fallback.set_focusable(true);
-    content.append(&fallback);
+    general_content.append(&fallback);
     let fallback_mode_label = gtk::Label::builder()
         .label(i18n::text("Fallback Launch Mode"))
         .xalign(0.0)
         .build();
-    content.append(&fallback_mode_label);
+    general_content.append(&fallback_mode_label);
     let fallback_mode =
         gtk::DropDown::from_strings(&[&i18n::text("Normal"), &i18n::text("Private")]);
     fallback_mode.update_property(&[gtk::accessible::Property::Label(&i18n::text(
         "Fallback Launch Mode",
     ))]);
-    content.append(&fallback_mode);
+    general_content.append(&fallback_mode);
 
     if !store.warnings.is_empty() {
         let warning = gtk::Label::builder()
@@ -274,10 +302,10 @@ pub fn present(application: &adw::Application, session: PickerSession, store: Co
         warning.update_property(&[gtk::accessible::Property::Description(&i18n::text(
             "Configuration permission warning",
         ))]);
-        content.append(&warning);
+        general_content.append(&warning);
     }
 
-    append_desktop_defaults(&content);
+    append_desktop_defaults(&general_content);
 
     let error = gtk::Label::builder()
         .xalign(0.0)
@@ -289,7 +317,11 @@ pub fn present(application: &adw::Application, session: PickerSession, store: Co
     error.update_property(&[gtk::accessible::Property::Description(&i18n::text(
         "Browser Picker configuration error",
     ))]);
-    content.append(&error);
+    let footer = gtk::Box::new(gtk::Orientation::Vertical, 9);
+    footer.set_margin_bottom(18);
+    footer.set_margin_start(18);
+    footer.set_margin_end(18);
+    footer.append(&error);
     let save_label = if current_target.is_some() {
         i18n::text("_Save and Apply")
     } else {
@@ -301,20 +333,56 @@ pub fn present(application: &adw::Application, session: PickerSession, store: Co
         gtk::accessible::Property::Label(save_label.trim_start_matches('_')),
         gtk::accessible::Property::KeyShortcuts("<Alt>s"),
     ]);
-    content.append(&save);
+    footer.append(&save);
 
-    let page = gtk::ScrolledWindow::builder()
-        .child(&content)
+    let stack = gtk::Stack::builder()
+        .hexpand(true)
+        .vexpand(true)
+        .transition_type(gtk::StackTransitionType::Crossfade)
+        .build();
+    let destinations_page = gtk::ScrolledWindow::builder()
+        .child(&destinations_content)
         .hscrollbar_policy(gtk::PolicyType::Never)
         .vexpand(true)
         .build();
+    let routing_page = gtk::ScrolledWindow::builder()
+        .child(&routing_content)
+        .hscrollbar_policy(gtk::PolicyType::Never)
+        .vexpand(true)
+        .build();
+    let general_page = gtk::ScrolledWindow::builder()
+        .child(&general_content)
+        .hscrollbar_policy(gtk::PolicyType::Never)
+        .vexpand(true)
+        .build();
+    stack.add_titled(
+        &destinations_page,
+        Some("destinations"),
+        &i18n::text("Destinations"),
+    );
+    stack.add_titled(&routing_page, Some("routing-rules"), &i18n::text("Rules"));
+    stack.add_titled(&general_page, Some("general"), &i18n::text("General"));
+    if initial_page == InitialPage::Rules {
+        stack.set_visible_child_name("routing-rules");
+    }
+
+    let switcher = gtk::StackSwitcher::builder()
+        .halign(gtk::Align::Center)
+        .stack(&stack)
+        .build();
+    switcher.set_margin_top(12);
+    switcher.set_margin_bottom(6);
+    let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    content.append(&switcher);
+    content.append(&stack);
+    content.append(&footer);
     let toolbar = adw::ToolbarView::new();
     toolbar.add_top_bar(&adw::HeaderBar::new());
-    toolbar.set_content(Some(&page));
+    toolbar.set_content(Some(&content));
     let window = adw::ApplicationWindow::builder()
         .application(application)
         .title(i18n::text("Browser Picker"))
-        .default_width(720)
+        .default_width(900)
         .default_height(720)
         .content(&toolbar)
         .build();
@@ -400,12 +468,20 @@ pub fn present(application: &adw::Application, session: PickerSession, store: Co
         restoring_fallback,
         move || {
             restoring_fallback.set(true);
+            let items = items.borrow();
+            let destination_choices: Vec<_> = items
+                .iter()
+                .filter(|item| item.enabled.is_active())
+                .map(|item| (item.id.text().to_string(), item.label.text().to_string()))
+                .collect();
+            rule_editor.set_destination_choices(&destination_choices);
             restore_fallback(
                 &fallback,
-                &items.borrow(),
+                &items,
                 &preferred_fallback,
                 &rule_editor.referenced_destination_ids(),
             );
+            drop(items);
             restoring_fallback.set(false);
             refresh_references();
         }

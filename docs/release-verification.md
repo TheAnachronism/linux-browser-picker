@@ -130,7 +130,7 @@ Every numbered issue #1 user story maps to one evidence row. GNOME-observed and 
 | 30 | Flatpak and Snap packaging stay generic discovered destinations (`src/profiles.rs`) | Automated |
 | 31–37 | Manual argv destinations and GAppInfo launch for discovered applications (`tests/routing_cli.rs`, `checks.gui-smoke`) | Automated |
 | 38–44 | Private Launch Mode as an action option, capability, disclaimer, and Ctrl+Shift+P (`checks.gui-smoke`, `checks.release-proof`) | Automated |
-| 45–70 | Matching URL, structured/glob/regex conditions, ordered Routing Rules, Preselection, Fallback Action, file bypass, and rule editor (`tests/routing_cli.rs`, `checks.gui-smoke`, `checks.release-proof`) | Automated |
+| 45–70 | Matching URL, structured/glob/regex conditions, ordered Routing Rules, Preselection, Fallback Action, file bypass, and the tabbed rule editor with enabled-destination helpers (`tests/routing_cli.rs`, `checks.gui-smoke`, `checks.release-proof`) | Automated |
 | 71–76 | Host emphasis, IDN forms, reveal/copy of URL and path, concealed credentials (`checks.release-proof`) | Automated |
 | 77–82 | File URI/path intake, symlink and authority limits, no MIME sniffing, revalidation (`tests/routing_cli.rs`, `checks.gui-smoke`) | Automated |
 | 83 | Desktop entry advertises only HTML and XHTML local documents (`checks.package`) | Automated |
