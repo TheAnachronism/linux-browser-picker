@@ -335,7 +335,12 @@ run_picker_reveal_filter_repair() {
   inspect node "Alpha Browser" --role "list item" --enabled --shortcut "<Alt>1"
   inspect node "Unavailable Browser" --role "list item" --disabled --shortcut "<Alt>3"
   inspect node "Repair" --role "button" --enabled
-  inspect node "Private Launch Mode" --role "check box" --enabled --shortcut "<Control><Shift>p"
+  inspect node "Private Launch Mode" --role "check box" --enabled --shortcut "<Control><Shift>p" --description "Open using the destination's private mode"
+  inspect checked "Private Launch Mode"
+  xdotool key alt+3
+  inspect node "Unavailable Browser" --role "list item" --selected
+  inspect node "Private Launch Mode" --role "check box" --disabled --description "Selected destination does not support private mode"
+  inspect checked "Private Launch Mode"
   inspect node "Reveal full URL details" --role "check box" --enabled
   inspect node "$url" --role "label" --description "Full Open Target details" --hidden
   inspect activate "Reveal full URL details"
@@ -922,6 +927,8 @@ file://$file"
   inspect wait "private Launch Mode is not available"
   inspect wait "could not accept dispatch"
   inspect node "Work Firefox" --role "list item" --selected --focused
+  inspect node "Private Launch Mode" --role "check box" --disabled --description "private Launch Mode is not available"
+  inspect checked "Private Launch Mode"
   inspect node "Repair configuration" --role "button" --enabled --shortcut "<Alt>r"
   test ! -f "$BROWSER_PICKER_TEST_OUTPUT"
   xdotool key alt+2

@@ -1647,6 +1647,9 @@ fn collect_configuration(
             }
             None => (item.application_label.clone(), item.launch.clone()),
         };
+        let unavailable_reason = None;
+        let private_capability =
+            configuration::current_private_capability(&launch, &unavailable_reason);
         let destination = BrowserDestination {
             id: item.id.text().trim().to_string(),
             label: item.label.text().to_string(),
@@ -1658,7 +1661,8 @@ fn collect_configuration(
                 Some(icon.to_string())
             },
             launch,
-            unavailable_reason: None,
+            unavailable_reason,
+            private_capability,
         };
         enabled_ids.push(destination.id.clone());
         destinations.push(destination);

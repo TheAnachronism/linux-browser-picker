@@ -25,6 +25,13 @@ pub struct BrowserDestination {
     pub icon_name: Option<String>,
     pub launch: DestinationLaunch,
     pub unavailable_reason: Option<String>,
+    pub private_capability: PrivateCapability,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PrivateCapability {
+    Available,
+    Unsupported,
 }
 
 #[derive(Clone, Debug)]
@@ -277,19 +284,11 @@ pub enum Error {
 
 impl BrowserDestination {
     pub fn supports_private(&self) -> bool {
-        match &self.launch {
-            DestinationLaunch::Manual {
-                private_arguments: Some(_),
-                ..
-            }
-            | DestinationLaunch::FirefoxProfile { .. }
-            | DestinationLaunch::ChromiumProfile { .. } => true,
-            DestinationLaunch::Manual {
-                private_arguments: None,
-                ..
-            }
-            | DestinationLaunch::Discovered { .. } => false,
-        }
+        matches!(self.private_capability, PrivateCapability::Available)
+    }
+
+    pub fn accepts_private_configuration(&self) -> bool {
+        launch_declares_private(&self.launch)
     }
 
     pub fn desktop_id(&self) -> Option<&str> {
@@ -744,7 +743,7 @@ pub(super) fn validate_body(file: ConfigFile) -> Result<Configuration, Error> {
                 .iter()
                 .find(|candidate| candidate.id == destination)
                 .ok_or_else(|| Error::UnknownFallback(destination.clone()))?;
-            if mode == LaunchMode::Private && !destination_ref.supports_private() {
+            if mode == LaunchMode::Private && !destination_ref.accepts_private_configuration() {
                 return Err(Error::UnsupportedPrivateMode(destination));
             }
             FallbackAction::Open { destination, mode }
@@ -831,7 +830,7 @@ fn validate_rule(
         .iter()
         .find(|candidate| candidate.id == *destination_id)
         .ok_or_else(|| Error::UnknownDestination(destination_id.clone()))?;
-    if *mode == LaunchMode::Private && !destination.supports_private() {
+    if *mode == LaunchMode::Private && !destination.accepts_private_configuration() {
         return Err(Error::UnsupportedPrivateMode(destination_id.clone()));
     }
     Ok(rule)
@@ -874,8 +873,11 @@ fn validate_destination(destination: DestinationFile) -> Result<BrowserDestinati
                 arguments: args,
                 private_arguments: private_args,
             };
+            let unavailable_reason = manual_unavailability(&executable);
+            let private_capability = current_private_capability(&launch, &unavailable_reason);
             Ok(BrowserDestination {
-                unavailable_reason: manual_unavailability(&executable),
+                unavailable_reason,
+                private_capability,
                 id,
                 label,
                 application_label,
@@ -898,14 +900,17 @@ fn validate_destination(destination: DestinationFile) -> Result<BrowserDestinati
             } else {
                 None
             };
+            let launch = DestinationLaunch::Discovered { desktop_id };
+            let private_capability = current_private_capability(&launch, &unavailable_reason);
             Ok(BrowserDestination {
                 id,
                 label,
                 application_label,
                 profile_label,
                 icon_name: icon,
-                launch: DestinationLaunch::Discovered { desktop_id },
+                launch,
                 unavailable_reason,
+                private_capability,
             })
         }
         ApplicationFile::FirefoxProfile {
@@ -984,6 +989,8 @@ fn profile_destination(
     let application_label = discovery::application(&desktop_id)
         .map(|application| application.name)
         .unwrap_or_else(|| desktop_id.clone());
+    let unavailable_reason = profile_unavailability(&desktop_id, identity);
+    let private_capability = current_private_capability(&launch, &unavailable_reason);
     BrowserDestination {
         id,
         label,
@@ -991,7 +998,8 @@ fn profile_destination(
         profile_label,
         icon_name: icon,
         launch,
-        unavailable_reason: profile_unavailability(&desktop_id, identity),
+        unavailable_reason,
+        private_capability,
     }
 }
 
@@ -1036,6 +1044,33 @@ fn is_valid_id(id: &str) -> bool {
         && id
             .bytes()
             .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+}
+
+pub(crate) fn current_private_capability(
+    launch: &DestinationLaunch,
+    unavailable_reason: &Option<String>,
+) -> PrivateCapability {
+    if unavailable_reason.is_some() || !launch_declares_private(launch) {
+        PrivateCapability::Unsupported
+    } else {
+        PrivateCapability::Available
+    }
+}
+
+fn launch_declares_private(launch: &DestinationLaunch) -> bool {
+    match launch {
+        DestinationLaunch::Manual {
+            private_arguments: Some(_),
+            ..
+        }
+        | DestinationLaunch::FirefoxProfile { .. }
+        | DestinationLaunch::ChromiumProfile { .. } => true,
+        DestinationLaunch::Manual {
+            private_arguments: None,
+            ..
+        }
+        | DestinationLaunch::Discovered { .. } => false,
+    }
 }
 
 fn manual_unavailability(executable: &str) -> Option<String> {

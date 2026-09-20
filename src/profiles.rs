@@ -112,12 +112,7 @@ const FAMILY_CANDIDATES: &[FamilyCandidate] = &[
         profile_root: |paths| paths.home.join(".librewolf"),
     },
     FamilyCandidate {
-        ids: &[
-            "zen",
-            "zen-browser",
-            "zen-beta",
-            "app.zen_browser.zen",
-        ],
+        ids: &["zen", "zen-browser", "zen-beta", "app.zen_browser.zen"],
         family: BrowserFamily::Firefox,
         product: "Zen",
         private_flag: "--private-window",

@@ -1318,15 +1318,19 @@ fn update_private_mode(
     private_mode: &gtk::CheckButton,
     destinations: &[BrowserDestination],
 ) {
-    let supported = list
+    let destination = list
         .selected_row()
-        .and_then(|row| destinations.get(row.index() as usize))
-        .is_some_and(BrowserDestination::supports_private);
+        .and_then(|row| destinations.get(row.index() as usize));
+    let supported = destination.is_some_and(BrowserDestination::supports_private);
     private_mode.set_sensitive(supported);
-    let description = if supported {
-        i18n::text("Open using the destination's private mode")
-    } else {
-        i18n::text("Selected destination does not support private mode")
+    let description = match destination {
+        Some(destination) if destination.supports_private() => {
+            i18n::text("Open using the destination's private mode")
+        }
+        Some(destination) if destination.accepts_private_configuration() => {
+            i18n::text("private Launch Mode is not available")
+        }
+        _ => i18n::text("Selected destination does not support private mode"),
     };
     private_mode.set_tooltip_text(Some(&description));
     private_mode.update_property(&[gtk::accessible::Property::Description(&description)]);

@@ -329,16 +329,21 @@ pub fn discovered_destinations() -> Vec<BrowserDestination> {
                 &discovery::suggested_slug(&candidate.desktop_id),
                 &mut used,
             );
+            let launch = DestinationLaunch::Discovered {
+                desktop_id: candidate.desktop_id,
+            };
+            let unavailable_reason = None;
+            let private_capability =
+                configuration::current_private_capability(&launch, &unavailable_reason);
             BrowserDestination {
                 id,
                 label: candidate.name.clone(),
                 application_label: candidate.name,
                 profile_label: None,
                 icon_name: None,
-                launch: DestinationLaunch::Discovered {
-                    desktop_id: candidate.desktop_id,
-                },
-                unavailable_reason: None,
+                launch,
+                unavailable_reason,
+                private_capability,
             }
         })
         .collect()

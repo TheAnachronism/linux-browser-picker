@@ -1548,6 +1548,69 @@ fn stale_profile_executable_fails_without_dispatch() {
 }
 
 #[test]
+fn diagnose_reports_current_private_capability_for_each_destination_kind() {
+    let config_home = TempDir::new().expect("temporary configuration home should be created");
+    let executable = install_fake_browser(&config_home);
+    let (data_home, desktop_id) = install_discovered_browser(&config_home);
+    let firefox_data =
+        install_family_desktop(&config_home, "firefox.desktop", "Firefox", &executable);
+    let chromium_data =
+        install_family_desktop(&config_home, "chromium.desktop", "Chromium", &executable);
+    let firefox_profile = config_home.path().join("work-profile");
+    fs::create_dir(&firefox_profile).expect("Firefox profile should exist");
+    let user_data = config_home.path().join("chromium-data");
+    fs::create_dir_all(user_data.join("Profile 1")).expect("Chromium profile should exist");
+    write_raw_config(
+        &config_home,
+        &format!(
+            "version = 1\n\n[[destinations]]\nid = \"manual\"\nlabel = \"Manual Browser\"\n\n[destinations.application]\ntype = \"manual\"\nexecutable = \"{}\"\nargs = [\"{{target}}\"]\nprivate_args = [\"--private\", \"{{target}}\"]\n\n[[destinations]]\nid = \"discovered\"\nlabel = \"Discovered Browser\"\n\n[destinations.application]\ntype = \"discovered\"\ndesktop_id = \"{desktop_id}\"\n\n[[destinations]]\nid = \"firefox-work\"\nlabel = \"Work Firefox\"\nprofile_label = \"Work\"\n\n[destinations.application]\ntype = \"firefox-profile\"\ndesktop_id = \"firefox.desktop\"\nname = \"Work\"\npath = \"{}\"\n\n[[destinations]]\nid = \"chromium-work\"\nlabel = \"Work Chromium\"\nprofile_label = \"Work\"\n\n[destinations.application]\ntype = \"chromium-profile\"\ndesktop_id = \"chromium.desktop\"\nuser_data_dir = \"{}\"\nprofile_directory = \"Profile 1\"\n\n[[rules]]\nid = \"manual-host\"\nname = \"Manual host\"\nenabled = true\n\n[rules.action]\ntype = \"open\"\ndestination = \"manual\"\n\n[[rules.groups]]\n\n[[rules.groups.conditions]]\ntype = \"host\"\nvalue = \"manual.example\"\n\n[[rules]]\nid = \"discovered-host\"\nname = \"Discovered host\"\nenabled = true\n\n[rules.action]\ntype = \"open\"\ndestination = \"discovered\"\n\n[[rules.groups]]\n\n[[rules.groups.conditions]]\ntype = \"host\"\nvalue = \"discovered.example\"\n\n[[rules]]\nid = \"firefox-host\"\nname = \"Firefox host\"\nenabled = true\n\n[rules.action]\ntype = \"open\"\ndestination = \"firefox-work\"\n\n[[rules.groups]]\n\n[[rules.groups.conditions]]\ntype = \"host\"\nvalue = \"firefox.example\"\n\n[[rules]]\nid = \"chromium-host\"\nname = \"Chromium host\"\nenabled = true\n\n[rules.action]\ntype = \"open\"\ndestination = \"chromium-work\"\n\n[[rules.groups]]\n\n[[rules.groups.conditions]]\ntype = \"host\"\nvalue = \"chromium.example\"\n\n[fallback]\naction = \"show-picker\"\n",
+            executable.display(),
+            firefox_profile.display(),
+            user_data.display()
+        ),
+    );
+
+    let data_dirs = format!(
+        "{}:{}:{}",
+        data_home.display(),
+        firefox_data.display(),
+        chromium_data.display()
+    );
+    let diagnose = |target: &str| {
+        let output = browser_picker(&config_home)
+            .env("XDG_DATA_HOME", &firefox_data)
+            .env("XDG_DATA_DIRS", &data_dirs)
+            .arg("diagnose")
+            .arg(target)
+            .output()
+            .expect("Browser Picker should start");
+        assert!(
+            output.status.success(),
+            "stderr={}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).expect("diagnostic output should be UTF-8")
+    };
+
+    assert_eq!(
+        diagnose("https://manual.example/"),
+        "kind=web\nresult=dispatched\nrule=manual-host\ndestination=manual\nmode=normal\nprivate=available\navailability=available\n"
+    );
+    assert_eq!(
+        diagnose("https://discovered.example/"),
+        "kind=web\nresult=dispatched\nrule=discovered-host\ndestination=discovered\nmode=normal\nprivate=unavailable\navailability=available\n"
+    );
+    assert_eq!(
+        diagnose("https://firefox.example/"),
+        "kind=web\nresult=dispatched\nrule=firefox-host\ndestination=firefox-work\nmode=normal\nprivate=available\navailability=available\n"
+    );
+    assert_eq!(
+        diagnose("https://chromium.example/"),
+        "kind=web\nresult=dispatched\nrule=chromium-host\ndestination=chromium-work\nmode=normal\nprivate=available\navailability=available\n"
+    );
+}
+
+#[test]
 fn stale_profile_executable_is_unavailable_in_diagnostics() {
     let config_home = TempDir::new().expect("temporary configuration home should be created");
     let missing = config_home.path().join("gone-firefox");
@@ -1578,7 +1641,7 @@ fn stale_profile_executable_is_unavailable_in_diagnostics() {
     );
     assert_eq!(
         stdout,
-        "kind=web\nresult=dispatched\ndestination=firefox-work\nmode=normal\nprivate=available\navailability=unavailable\n"
+        "kind=web\nresult=dispatched\ndestination=firefox-work\nmode=normal\nprivate=unavailable\navailability=unavailable\n"
     );
 }
 
@@ -1624,5 +1687,22 @@ fn lost_private_capability_keeps_configuration_and_does_not_downgrade() {
     assert_eq!(
         stderr,
         "Browser Destination 'firefox-work' could not accept dispatch: private Launch Mode is not available\n"
+    );
+
+    let diagnose = browser_picker(&config_home)
+        .env("XDG_DATA_HOME", &data_home)
+        .env("XDG_DATA_DIRS", &data_home)
+        .arg("diagnose")
+        .arg("https://work.example/mail")
+        .output()
+        .expect("Browser Picker should start");
+    assert!(
+        diagnose.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&diagnose.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(diagnose.stdout).expect("diagnostic output should be UTF-8"),
+        "kind=web\nresult=dispatched\nrule=private-work\ndestination=firefox-work\nmode=private\nprivate=unavailable\navailability=unavailable\n"
     );
 }

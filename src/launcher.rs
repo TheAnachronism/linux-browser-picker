@@ -23,6 +23,12 @@ pub fn dispatch(
     target: &OpenTarget,
     private: bool,
 ) -> Result<(), Error> {
+    if private && !destination.supports_private() {
+        return Err(Error {
+            destination_id: destination.id.clone(),
+            reason: FailureReason::UnsupportedPrivate,
+        });
+    }
     match &destination.launch {
         DestinationLaunch::Manual {
             executable,
@@ -30,7 +36,10 @@ pub fn dispatch(
             private_arguments,
         } => {
             let arguments = if private {
-                private_arguments.as_deref().unwrap_or(arguments)
+                private_arguments.as_deref().ok_or_else(|| Error {
+                    destination_id: destination.id.clone(),
+                    reason: FailureReason::UnsupportedPrivate,
+                })?
             } else {
                 arguments
             };
