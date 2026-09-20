@@ -92,6 +92,35 @@ fn picker_fallback_fails_without_session_bus_and_does_not_dispatch() {
 }
 
 #[test]
+fn unknown_option_identifies_the_error_without_echoing_the_argument() {
+    let config_home = TempDir::new().expect("temporary configuration home should be created");
+    let path = config_home.path().join("page.html");
+    fs::write(&path, "<html></html>").expect("HTML fixture should be writable");
+    let arguments = [
+        "--https://user:secret@example.com/path?token=do-not-print".to_owned(),
+        format!("--{}", path.display()),
+    ];
+
+    for argument in arguments {
+        let output = browser_picker(&config_home)
+            .arg(&argument)
+            .output()
+            .expect("Browser Picker should start");
+        let stderr = String::from_utf8(output.stderr).expect("error output should be UTF-8");
+
+        assert_eq!(output.status.code(), Some(1), "stderr={stderr}");
+        assert!(output.stdout.is_empty());
+        assert_eq!(
+            stderr,
+            "Unknown argument\nRun 'browser-picker help' to inspect valid operations.\n"
+        );
+        assert_redacted(&stderr);
+        assert!(!stderr.contains(&argument));
+        assert!(!stderr.contains(&path.display().to_string()));
+    }
+}
+
+#[test]
 fn multiple_automatic_targets_dispatch_in_order_without_session_bus() {
     let config_home = TempDir::new().expect("temporary configuration home should be created");
     let executable = install_fake_browser(&config_home);

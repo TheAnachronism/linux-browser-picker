@@ -85,9 +85,9 @@ fn main() -> gtk::glib::ExitCode {
         None => open_configuration(),
         Some(argument) if argument.to_string_lossy().starts_with('-') => {
             eprintln!(
-                "{}: {}",
+                "{}\n{}",
                 i18n::text("Unknown argument"),
-                argument.to_string_lossy()
+                i18n::text("Run 'browser-picker help' to inspect valid operations.")
             );
             gtk::glib::ExitCode::FAILURE
         }

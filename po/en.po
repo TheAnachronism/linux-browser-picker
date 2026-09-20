@@ -38,6 +38,9 @@ msgstr "Configure browser destinations and routing rules."
 msgid "Unknown argument"
 msgstr "Unknown argument"
 
+msgid "Run 'browser-picker help' to inspect valid operations."
+msgstr "Run 'browser-picker help' to inspect valid operations."
+
 msgid ""
 "Browser Picker\n"
 "Choose where links and local files open.\n"

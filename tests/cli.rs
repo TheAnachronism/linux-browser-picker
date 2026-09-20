@@ -149,7 +149,7 @@ fn unknown_argument_fails_without_a_graphical_session() {
     assert!(output.stdout.is_empty());
     assert_eq!(
         String::from_utf8(output.stderr).expect("error output should be UTF-8"),
-        "Unknown argument: --bogus\n"
+        "Unknown argument\nRun 'browser-picker help' to inspect valid operations.\n"
     );
 }
 

@@ -30,6 +30,9 @@ msgstr ""
 msgid "Unknown argument"
 msgstr ""
 
+msgid "Run 'browser-picker help' to inspect valid operations."
+msgstr ""
+
 msgid ""
 "Browser Picker\n"
 "Choose where links and local files open.\n"
