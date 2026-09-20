@@ -55,6 +55,9 @@ runCommand "browser-picker-release-proof"
     export XDG_CONFIG_HOME="$TMPDIR/xdg-config"
     export XDG_DATA_DIRS="${browser-picker}/share''${XDG_DATA_DIRS:+:$XDG_DATA_DIRS}"
     export BROWSER_PICKER A11Y_INSPECT I18N_COVERAGE SRC_DIR PO_FILE CHECKLIST AT_SPI_LAUNCHER AT_SPI_REGISTRY
+    mkdir -p "$HOME" "$XDG_RUNTIME_DIR" "$XDG_DATA_HOME/applications" \
+      "$XDG_STATE_HOME" "$XDG_CACHE_HOME" "$XDG_CONFIG_HOME"
+    chmod 700 "$XDG_RUNTIME_DIR"
     dbus-run-session --config-file="$DBUS_SESSION_CONF" -- \
       xvfb-run -a -s '-screen 0 1920x1080x24' \
       bash ${./release-proof.sh}

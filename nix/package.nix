@@ -24,7 +24,12 @@ rustPlatform.buildRustPackage {
       let
         name = baseNameOf path;
       in
-      name != ".git" && name != ".envrc" && name != "target";
+      name != ".git"
+        && name != ".envrc"
+        && name != "target"
+        && name != "a11y_inspect.py"
+        && name != "release-proof.sh"
+        && name != "release-proof.nix";
   };
   cargoLock.lockFile = ../Cargo.lock;
   nativeBuildInputs = [
