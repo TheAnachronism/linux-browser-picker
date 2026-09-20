@@ -81,6 +81,9 @@ fn main() -> gtk::glib::ExitCode {
         Some(argument) if matches!(argument.to_str(), Some("diagnose" | "--diagnose")) => {
             diagnose_target()
         }
+        Some(argument) if matches!(argument.to_str(), Some("associations" | "--associations")) => {
+            print_associations()
+        }
         Some(argument) if is_config_operation(argument.to_str()) => open_configuration(),
         None => open_configuration(),
         Some(argument) if argument.to_string_lossy().starts_with('-') => {
@@ -124,6 +127,13 @@ fn open_configuration() -> gtk::glib::ExitCode {
         ));
     }
     application::run()
+}
+
+fn print_associations() -> gtk::glib::ExitCode {
+    for line in associations::report().lines() {
+        println!("{line}");
+    }
+    gtk::glib::ExitCode::SUCCESS
 }
 
 fn diagnose_target() -> gtk::glib::ExitCode {
