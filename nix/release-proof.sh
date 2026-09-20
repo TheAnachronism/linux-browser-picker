@@ -4,11 +4,13 @@ set -eu
 python3 "$I18N_COVERAGE" "$SRC_DIR" "$PO_FILE"
 python3 - "$CHECKLIST" <<'PY'
 from pathlib import Path
+import re
 import sys
 
 checklist = Path(sys.argv[1]).read_text()
 for heading in (
     "Automated coverage",
+    "Desktop session coverage",
     "Manual accessibility and desktop checklist",
     "Workstation Zen applications",
     "Rofi picker",
@@ -17,10 +19,90 @@ for heading in (
     "KDE-unverified",
     "GNOME session",
     "GNOME-unverified",
+    "GNOME-observed",
+    "KDE-observed",
+    "Out of scope",
+    "Parent criterion map",
     "Parent specification coverage",
 ):
     if heading not in checklist:
         raise SystemExit(f"release checklist missing {heading!r}")
+
+def section(title):
+    pattern = rf"(?ms)^## {re.escape(title)}\n(.*?)(?=^## |\Z)"
+    match = re.search(pattern, checklist)
+    if not match:
+        raise SystemExit(f"missing section {title!r}")
+    return match.group(1)
+
+claim_kinds = section("Claim kinds")
+for kind in (
+    "Automated",
+    "Workstation-observed",
+    "GNOME-observed",
+    "KDE-observed",
+    "GNOME-unverified",
+    "KDE-unverified",
+    "aarch64-unverified",
+    "Out of scope",
+):
+    if kind not in claim_kinds:
+        raise SystemExit(f"claim kinds missing {kind!r}")
+if "unused until" not in claim_kinds.lower():
+    raise SystemExit("GNOME-observed and KDE-observed must be defined as unused until their scenarios complete")
+
+automated = section("Automated coverage")
+if "GNOME-observed" in automated or "KDE-observed" in automated:
+    raise SystemExit("automated coverage must not mark GNOME or KDE session behavior as observed")
+if "| GNOME session |" in automated or "| KDE Plasma session |" in automated:
+    raise SystemExit("GNOME and KDE session procedures belong in desktop session coverage, not automated coverage")
+
+desktop = section("Desktop session coverage")
+if "nix/gnome-session.sh" not in desktop or "nix/plasma-session.sh" not in desktop:
+    raise SystemExit("desktop session coverage must cite the GNOME and KDE repeatable scenarios")
+if "GNOME-unverified" not in desktop or "KDE-unverified" not in desktop:
+    raise SystemExit("desktop session coverage must remain GNOME-unverified and KDE-unverified")
+if "GNOME-observed" in desktop or "KDE-observed" in desktop:
+    raise SystemExit("desktop session coverage must not claim GNOME-observed or KDE-observed before those scenarios complete")
+
+manual = section("Manual accessibility and desktop checklist")
+for needle in ("niri", "zen-beta", "zen-secondary", "zen-link-picker", "Rofi"):
+    if needle not in manual:
+        raise SystemExit(f"workstation-scoped checklist missing {needle!r}")
+if "- [x]" in manual and "Orca" in manual:
+    orca_line = next(line for line in manual.splitlines() if "Orca" in line)
+    if orca_line.strip().startswith("- [x]"):
+        raise SystemExit("live screen-reader speech must not be marked proven")
+pointer_line = next(line for line in manual.splitlines() if "Pointer drag-and-drop" in line)
+if pointer_line.strip().startswith("- [x]"):
+    raise SystemExit("live pointer drag must not be marked proven")
+if ("GNOME-unverified" in desktop or "KDE-unverified" in desktop) and any(
+    phrase in checklist.lower() for phrase in ("continuously verified", "continuously tested")
+):
+    raise SystemExit("do not describe GNOME/KDE as continuously verified or tested while unverified")
+
+criterion_map = section("Parent criterion map")
+found = set()
+for cell in re.findall(r"(?m)^\|\s*([^|]+)\|", criterion_map):
+    for part in re.split(r"[,;]", cell):
+        part = part.strip()
+        match = re.fullmatch(r"(\d+)\s*[–-]\s*(\d+)", part)
+        if match:
+            start, end = int(match.group(1)), int(match.group(2))
+            if end < start:
+                raise SystemExit(f"criterion range {part} is reversed")
+            found.update(range(start, end + 1))
+            continue
+        if re.fullmatch(r"\d+", part):
+            found.add(int(part))
+missing = [n for n in range(1, 155) if n not in found]
+extra = sorted(n for n in found if n < 1 or n > 154)
+if missing:
+    raise SystemExit(f"parent criterion map missing {missing[:12]}{'...' if len(missing) > 12 else ''}")
+if extra:
+    raise SystemExit(f"parent criterion map has out-of-range ids {extra[:12]}")
+if "148" in criterion_map and "GNOME-observed" in criterion_map.split("148", 1)[-1][:200]:
+    raise SystemExit("criterion 148 must not be GNOME-observed before the GNOME scenario completes")
 print("release checklist is complete")
 PY
 
