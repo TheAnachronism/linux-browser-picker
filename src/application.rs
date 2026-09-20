@@ -14,11 +14,10 @@ use crate::launcher;
 use crate::open_target::OpenTarget;
 use crate::routing::{self, Preselection};
 use crate::setup;
+use crate::{MAX_TARGETS_PER_ACTIVATION, STATUS_OVERFLOW};
 
 pub const ID: &str = "io.github.TheAnachronism.BrowserPicker";
-const MAX_TARGETS_PER_ACTIVATION: usize = 100;
 const MAX_PENDING_REQUESTS: usize = 100;
-const STATUS_OVERFLOW: u8 = 6;
 #[derive(Clone, Debug)]
 pub(crate) struct PendingRequest {
     pub target: OpenTarget,

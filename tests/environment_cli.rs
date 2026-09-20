@@ -1,7 +1,8 @@
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::process::Command;
-
+use std::thread;
+use std::time::{Duration, Instant};
 use tempfile::TempDir;
 
 fn browser_picker(config_home: &TempDir) -> Command {
@@ -20,7 +21,7 @@ fn install_fake_browser(config_home: &TempDir) -> std::path::PathBuf {
     let executable = config_home.path().join("controlled-browser");
     fs::write(
         &executable,
-        "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$BROWSER_PICKER_TEST_OUTPUT\"\n",
+        "#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"$BROWSER_PICKER_TEST_OUTPUT\"\n",
     )
     .expect("fake browser should be writable");
     fs::set_permissions(&executable, fs::Permissions::from_mode(0o700))
@@ -91,21 +92,194 @@ fn picker_fallback_fails_without_session_bus_and_does_not_dispatch() {
 }
 
 #[test]
-fn multiple_targets_fail_without_session_bus() {
+fn multiple_automatic_targets_dispatch_in_order_without_session_bus() {
     let config_home = TempDir::new().expect("temporary configuration home should be created");
     let executable = install_fake_browser(&config_home);
     write_config(&config_home, &executable, "open");
+    let received = config_home.path().join("received-argv");
 
     let output = browser_picker(&config_home)
+        .env("BROWSER_PICKER_TEST_OUTPUT", &received)
+        .arg("https://example.com/one")
+        .arg("https://example.com/two")
+        .output()
+        .expect("Browser Picker should start");
+
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stdout.is_empty());
+    assert!(output.stderr.is_empty());
+    // Dispatch is sequential; fake browsers still race when appending argv.
+    let mut received_targets = wait_for_argv_records(&received, 2);
+    received_targets.sort();
+    assert_eq!(
+        received_targets,
+        ["https://example.com/one", "https://example.com/two"]
+    );
+}
+
+#[test]
+fn duplicate_automatic_targets_remain_distinct_without_session_bus() {
+    let config_home = TempDir::new().expect("temporary configuration home should be created");
+    let executable = install_fake_browser(&config_home);
+    write_config(&config_home, &executable, "open");
+    let received = config_home.path().join("received-argv");
+    let target = "https://example.com/repeat";
+
+    let output = browser_picker(&config_home)
+        .env("BROWSER_PICKER_TEST_OUTPUT", &received)
+        .arg(target)
+        .arg(target)
+        .output()
+        .expect("Browser Picker should start");
+
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(wait_for_argv_records(&received, 2), [target, target]);
+}
+
+#[test]
+fn choice_requiring_targets_fail_without_dropping_accepted_automatic_dispatches() {
+    let config_home = TempDir::new().expect("temporary configuration home should be created");
+    let executable = install_fake_browser(&config_home);
+    write_raw_config(
+        &config_home,
+        &format!(
+            "version = 1\n\n[[destinations]]\nid = \"controlled\"\nlabel = \"Controlled Browser\"\n\n[destinations.application]\ntype = \"manual\"\nexecutable = \"{}\"\nargs = [\"{{target}}\"]\n\n[[rules]]\nid = \"suggest\"\nname = \"Suggest\"\nenabled = true\n\n[rules.action]\ntype = \"preselect\"\ndestination = \"controlled\"\n\n[[rules.groups]]\n\n[[rules.groups.conditions]]\ntype = \"host\"\nvalue = \"suggested.example\"\n\n[fallback]\naction = \"open\"\ndestination = \"controlled\"\n",
+            executable.display()
+        ),
+    );
+    let path = config_home.path().join("page.html");
+    fs::write(&path, "<html></html>").expect("HTML fixture should be writable");
+    let received = config_home.path().join("received-argv");
+    let accepted = "https://example.com/ok";
+
+    let output = browser_picker(&config_home)
+        .env("BROWSER_PICKER_TEST_OUTPUT", &received)
+        .arg(&path)
+        .arg(accepted)
+        .arg("https://suggested.example/path")
+        .output()
+        .expect("Browser Picker should start");
+    let stderr = String::from_utf8(output.stderr).expect("error output should be UTF-8");
+
+    assert_eq!(output.status.code(), Some(5));
+    assert!(output.stdout.is_empty());
+    assert_eq!(
+        stderr,
+        "Picker, configuration, and shared queue operations require a user session D-Bus\n\
+Picker, configuration, and shared queue operations require a user session D-Bus\n"
+    );
+    assert!(!stderr.contains("page.html"));
+    assert!(!stderr.contains(path.to_str().unwrap()));
+    assert!(!stderr.contains("suggested.example"));
+    assert_eq!(wait_for_argv_records(&received, 1), [accepted]);
+}
+
+#[test]
+fn setup_targets_fail_without_session_bus_and_do_not_dispatch() {
+    let config_home = TempDir::new().expect("temporary configuration home should be created");
+    let received = config_home.path().join("received-argv");
+
+    let output = browser_picker(&config_home)
+        .env("BROWSER_PICKER_TEST_OUTPUT", &received)
         .arg("https://example.com/one")
         .arg("https://example.com/two")
         .output()
         .expect("Browser Picker should start");
 
     assert_eq!(output.status.code(), Some(5));
+    assert!(output.stdout.is_empty());
     assert_eq!(
         String::from_utf8(output.stderr).expect("error output should be UTF-8"),
-        "Picker, configuration, and shared queue operations require a user session D-Bus\n"
+        "Picker, configuration, and shared queue operations require a user session D-Bus\n\
+Picker, configuration, and shared queue operations require a user session D-Bus\n"
+    );
+    assert!(!received.exists());
+}
+
+#[test]
+fn invalid_and_oversized_targets_do_not_suppress_accepted_automatic_dispatches() {
+    let config_home = TempDir::new().expect("temporary configuration home should be created");
+    let executable = install_fake_browser(&config_home);
+    write_config(&config_home, &executable, "open");
+    let received = config_home.path().join("received-argv");
+    let accepted = "https://example.com/ok";
+    let prefix = "https://example.com/";
+    let oversized = format!("{prefix}{}", "a".repeat((64 * 1024) - prefix.len() + 1));
+
+    let output = browser_picker(&config_home)
+        .env("BROWSER_PICKER_TEST_OUTPUT", &received)
+        .arg("https://")
+        .arg(accepted)
+        .arg(&oversized)
+        .output()
+        .expect("Browser Picker should start");
+    let stderr = String::from_utf8(output.stderr).expect("error output should be UTF-8");
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    assert_eq!(
+        stderr,
+        "Invalid Open Target: expected an existing regular local file or an absolute HTTP or HTTPS URL\n\
+Open Target exceeds the 65536-byte limit\n"
+    );
+    assert_eq!(wait_for_argv_records(&received, 1), [accepted]);
+}
+
+#[test]
+fn excess_targets_overflow_without_dropping_the_accepted_prefix() {
+    let config_home = TempDir::new().expect("temporary configuration home should be created");
+    let executable = install_fake_browser(&config_home);
+    write_config(&config_home, &executable, "open");
+    let received = config_home.path().join("received-argv");
+    let accepted: Vec<String> = (0..100)
+        .map(|index| format!("https://example.com/{index}"))
+        .collect();
+    let excess = "https://example.com/excess";
+
+    let mut command = browser_picker(&config_home);
+    command.env("BROWSER_PICKER_TEST_OUTPUT", &received);
+    for target in &accepted {
+        command.arg(target);
+    }
+    let output = command
+        .arg(excess)
+        .output()
+        .expect("Browser Picker should start");
+    let stderr = String::from_utf8(output.stderr).expect("error output should be UTF-8");
+
+    assert_eq!(output.status.code(), Some(6));
+    assert!(output.stdout.is_empty());
+    assert_eq!(stderr, "One activation accepts at most 100 Open Targets\n");
+    let mut received_targets = wait_for_argv_records(&received, 100);
+    received_targets.sort();
+    let mut expected = accepted;
+    expected.sort();
+    assert_eq!(received_targets, expected);
+    assert!(!received_targets.iter().any(|target| target == excess));
+}
+
+fn wait_for_argv_records(path: &std::path::Path, count: usize) -> Vec<String> {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < deadline {
+        if let Ok(contents) = fs::read_to_string(path) {
+            let records: Vec<String> = contents.lines().map(str::to_owned).collect();
+            if records.len() == count {
+                return records;
+            }
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    panic!(
+        "fake browser did not record {count} argv records: {:?}",
+        fs::read_to_string(path)
     );
 }
 

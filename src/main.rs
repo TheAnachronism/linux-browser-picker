@@ -55,7 +55,9 @@ const STATUS_INVALID_TARGET: u8 = 2;
 const STATUS_CONFIGURATION: u8 = 3;
 const STATUS_LAUNCH: u8 = 4;
 const STATUS_ENVIRONMENT: u8 = 5;
+pub(crate) const STATUS_OVERFLOW: u8 = 6;
 const STATUS_FORWARDING: u8 = 7;
+pub(crate) const MAX_TARGETS_PER_ACTIVATION: usize = 100;
 
 fn main() -> gtk::glib::ExitCode {
     i18n::initialize();
@@ -186,16 +188,34 @@ fn route_arguments() -> gtk::glib::ExitCode {
     if has_session_bus() {
         return application::run();
     }
-    let mut arguments = env::args_os().skip(1);
-    let Some(argument) = arguments.next() else {
+    let arguments: Vec<_> = env::args_os().skip(1).collect();
+    if arguments.is_empty() {
         return open_configuration();
-    };
-    if arguments.next().is_some() {
-        return environment_failure(i18n::text(
-            "Picker, configuration, and shared queue operations require a user session D-Bus",
-        ));
     }
-    route_one_shot(&argument)
+    route_without_session_bus(&arguments)
+}
+
+fn route_without_session_bus(arguments: &[std::ffi::OsString]) -> gtk::glib::ExitCode {
+    let mut status = gtk::glib::ExitCode::SUCCESS;
+    for (index, argument) in arguments.iter().enumerate() {
+        if index == MAX_TARGETS_PER_ACTIVATION {
+            eprintln!(
+                "{}",
+                i18n::text("One activation accepts at most 100 Open Targets")
+            );
+            status = gtk::glib::ExitCode::from(STATUS_OVERFLOW);
+            break;
+        }
+        match route_one_shot(argument) {
+            gtk::glib::ExitCode::SUCCESS => {}
+            error_status => {
+                if status == gtk::glib::ExitCode::SUCCESS {
+                    status = error_status;
+                }
+            }
+        }
+    }
+    status
 }
 
 fn route_one_shot(argument: &OsStr) -> gtk::glib::ExitCode {
@@ -211,9 +231,9 @@ fn route_one_shot(argument: &OsStr) -> gtk::glib::ExitCode {
             "Picker, configuration, and shared queue operations require a user session D-Bus",
         )),
         Err(error) => {
-            let (message, status) = routing_error_message(error);
+            let (message, code) = routing_error_message(error);
             eprintln!("{message}");
-            gtk::glib::ExitCode::from(status)
+            gtk::glib::ExitCode::from(code)
         }
     }
 }
