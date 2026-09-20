@@ -8,6 +8,7 @@ This document maps parent specification #1 onto automated proof and the remainin
 | --- | --- |
 | Automated | Proven by `nix flake check` on x86_64-linux. Fake destinations record argv. No real Browser Application is launched. |
 | Workstation-observed | Proven on the current x86_64-linux niri session with the packaged binary, without changing Rofi or MIME defaults. |
+| KDE-unverified | Repeatable KDE Plasma session procedure exists (`nix/plasma-session.sh`). It has not been run on a Plasma host; this niri workstation cannot host it. |
 | aarch64-unverified | The aarch64-linux package derivation is evaluated. Runtime desktop, GTK, AT-SPI, and handler behavior are not claimed. |
 
 ## Automated coverage
@@ -28,6 +29,7 @@ nix flake check
 | Nix outputs | `checks.package`, `checks.app`, `checks.development-shell`, `checks.aarch64-defined` | x86_64-linux package; default flake app executes `version`; development shell executes rustc and cargo; aarch64-linux package derivation is evaluated | Automated; aarch64 runtime remains aarch64-unverified |
 | Home Manager associations | `checks.home-manager-associations` | Faithful Home Manager evaluation installs Browser Picker, independently sets HTTP/HTTPS versus HTML/XHTML defaults, and generates no canonical `browser-picker/config.toml` | Automated |
 | English-complete, translation-ready copy | `checks.package` `postCheck`, `checks.release-proof` | `msgfmt --check`, catalog/source coverage, no placeholder catalog entries | Automated |
+| KDE Plasma session | `nix/plasma-session.sh` | Packaged binary inside an actual Plasma session: GIO association status, GApplication forwarding, Picker focus/keyboard/AT-SPI names, and KDE System Settings instructions, using isolated XDG without changing operator defaults | KDE-unverified |
 
 Never launch a real Browser Application from the automated suite. Fake destinations record argv instead.
 
@@ -60,10 +62,27 @@ Observed 2026-09-20 on x86_64-linux niri after `nix build .#browser-picker`, usi
 - [ ] Orca (GNOME) or the KDE screen reader is not available on this niri session (`GTK_A11Y=none`, Orca not installed). Live speech is not claimed. AT-SPI names and states were dumped from the packaged binary with `GTK_A11Y=atspi` and match the automated tree: destination labels, Pending Request count, filter, private Launch Mode, and privacy-boundary description.
 - [ ] Pointer drag-and-drop reordering remains optional. Automated `checks.gui-smoke` and `checks.release-proof` cover drag handles plus Alt+Shift+arrows and Alt+arrows. This Wayland session did not exercise pointer drag, so that path is not workstation-observed.
 
+### KDE Plasma session
+
+Not observed on this niri host. Repeat from a KDE Plasma graphical session, without changing that host's MIME defaults or replacing any existing picker:
+
+```
+nix build .#browser-picker
+BROWSER_PICKER=$PWD/result bash nix/plasma-session.sh
+```
+
+The script refuses GNOME, niri, Xvfb, and tty substitutes, isolates `XDG_*`, and fails if operator `mimeapps.list` files change.
+
+- [ ] The packaged application runs inside an actual KDE Plasma session (`plasmashell`, `XDG_CURRENT_DESKTOP` contains KDE or Plasma).
+- [ ] HTTP, HTTPS, HTML, and XHTML status from `browser-picker associations` agrees with Plasma/GIO, including a KDE-specific `kde-mimeapps.list` override.
+- [ ] GApplication `Open` forwarding queues a second Pending Request in the primary Picker; filter starts focused; Alt+1/Alt+2 and Ctrl+Shift+P names are exposed; activating a destination dispatches through the installed package.
+- [ ] Configuration shows KDE System Settings → Applications → Default Applications instructions and no in-application takeover action.
+- [ ] Operator MIME defaults are unchanged after the scenario.
+
 ### Architecture note
 
 - [x] aarch64-linux package evaluation is covered by `checks.aarch64-defined`. Runtime desktop proof on aarch64 is aarch64-unverified until that hardware or emulation exercises the GTK surface.
 
 ## Parent specification coverage
 
-Every externally observable parent criterion is either in the automated table above or named in the manual checklist, with the claim kind recorded. Out-of-scope parent items (Rofi replacement, automatic MIME takeover, telemetry, extra locales, aarch64 runtime claims) remain out of scope and are not marked as proven. Live GNOME/KDE screen-reader speech and pointer drag on this niri host are left unchecked because they were not workstation-observed.
+Every externally observable parent criterion is either in the automated table above or named in the manual checklist, with the claim kind recorded. Out-of-scope parent items (Rofi replacement, automatic MIME takeover, telemetry, extra locales, aarch64 runtime claims) remain out of scope and are not marked as proven. Live GNOME/KDE screen-reader speech and pointer drag on this niri host are left unchecked because they were not workstation-observed. The KDE Plasma session procedure is recorded as KDE-unverified until it is run on a Plasma host.

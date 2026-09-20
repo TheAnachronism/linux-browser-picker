@@ -13,6 +13,8 @@ for heading in (
     "Workstation Zen applications",
     "Rofi picker",
     "MIME defaults",
+    "KDE Plasma session",
+    "KDE-unverified",
     "Parent specification coverage",
 ):
     if heading not in checklist:
