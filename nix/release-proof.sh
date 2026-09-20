@@ -15,6 +15,8 @@ for heading in (
     "MIME defaults",
     "KDE Plasma session",
     "KDE-unverified",
+    "GNOME session",
+    "GNOME-unverified",
     "Parent specification coverage",
 ):
     if heading not in checklist:
