@@ -222,7 +222,8 @@ impl RoutingRuleEditor {
         }
         let scroller = gtk::ScrolledWindow::builder()
             .child(&list)
-            .hscrollbar_policy(gtk::PolicyType::Automatic)
+            .hscrollbar_policy(gtk::PolicyType::Never)
+            .hexpand(true)
             .max_content_height(420)
             .propagate_natural_height(true)
             .build();
@@ -347,13 +348,18 @@ impl RoutingRuleEditor {
         let sample = gtk::Entry::builder()
             .text(target.map(OpenTarget::as_str).unwrap_or_default())
             .placeholder_text(i18n::text("Matching URL to test"))
+            .hexpand(true)
+            .width_chars(32)
             .build();
         sample.update_property(&[gtk::accessible::Property::Label(&i18n::text(
             "Matching URL to test",
         ))]);
-        root.append(&sample);
         let test = gtk::Button::with_label(&i18n::text("Test Rules"));
-        root.append(&test);
+        test.set_halign(gtk::Align::Start);
+        let test_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        test_row.append(&sample);
+        test_row.append(&test);
+        root.append(&test_row);
         let explanation = gtk::Label::builder()
             .label(match target {
                 Some(OpenTarget::File(_)) => file_explanation(),
@@ -555,6 +561,7 @@ fn build_rule(
     });
 
     let identity = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    identity.set_hexpand(true);
     let drag_handle = reorder_ui::prepend_handle(
         &identity,
         &i18n::text_with("Reorder {name}", &[("{name}", &rule.name)]),
@@ -563,6 +570,7 @@ fn build_rule(
     identity.append(&id);
     identity.append(&name);
     let action_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    action_row.set_hexpand(true);
     action_row.append(&action);
     action_row.append(&destination);
     action_row.append(&destination_helper.dropdown);
@@ -574,6 +582,7 @@ fn build_rule(
     add_group.update_property(&[gtk::accessible::Property::Label(&i18n::text(
         "Add OR condition group",
     ))]);
+    add_group.set_halign(gtk::Align::Start);
     let group_ctx = GroupEditorContext {
         on_change: on_change.clone(),
         groups: groups.clone(),
@@ -606,6 +615,7 @@ fn build_rule(
     ));
 
     let body = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    body.set_hexpand(true);
     body.set_margin_top(9);
     body.set_margin_bottom(9);
     body.set_margin_start(9);
@@ -696,8 +706,10 @@ fn build_group(group: ConditionGroup, ctx: &GroupEditorContext) -> GroupWidgets 
             );
         }
     ));
-    row.append(&add);
-    row.append(&remove);
+    let actions = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    actions.append(&add);
+    actions.append(&remove);
+    row.append(&actions);
     GroupWidgets { conditions, row }
 }
 
@@ -789,17 +801,21 @@ fn build_condition(condition: UrlCondition, ctx: &ConditionEditorContext) -> Con
     bind_toggle(&option, on_change);
     bind_toggle(&insensitive, on_change);
     bind_toggle(&negate, on_change);
-    let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    row.append(&kind);
-    row.append(&key);
-    row.append(&value);
-    row.append(&option);
-    row.append(&insensitive);
-    row.append(&negate);
+    let fields = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    fields.set_hexpand(true);
+    fields.append(&kind);
+    fields.append(&key);
+    fields.append(&value);
+    let options = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    options.append(&option);
+    options.append(&insensitive);
+    options.append(&negate);
     let remove = gtk::Button::with_label(&i18n::text("Remove AND condition"));
     remove.update_property(&[gtk::accessible::Property::Label(&i18n::text(
         "Remove AND condition",
     ))]);
+    let row = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    row.set_hexpand(true);
     let ctx = ctx.clone();
     remove.connect_clicked(glib::clone!(
         #[weak]
@@ -821,7 +837,9 @@ fn build_condition(condition: UrlCondition, ctx: &ConditionEditorContext) -> Con
             );
         }
     ));
-    row.append(&remove);
+    options.append(&remove);
+    row.append(&fields);
+    row.append(&options);
     ConditionWidgets {
         kind,
         key,
@@ -991,6 +1009,8 @@ fn entry(text: &str, label: &str, on_change: &ChangeCallback) -> gtk::Entry {
     let entry = gtk::Entry::builder()
         .text(text)
         .placeholder_text(label)
+        .hexpand(true)
+        .width_chars(24)
         .build();
     entry.update_property(&[gtk::accessible::Property::Label(label)]);
     entry.connect_changed(glib::clone!(
@@ -1020,14 +1040,13 @@ fn destination_choice_helper(
         dropdown: gtk::DropDown::from_strings(&[]),
         updating: Rc::new(Cell::new(false)),
     };
-    helper
-        .dropdown
-        .update_property(&[
-            gtk::accessible::Property::Label(&i18n::text("Choose an enabled Browser Destination")),
-            gtk::accessible::Property::Description(&i18n::text(
-                "Choose an enabled Browser Destination",
-            )),
-        ]);
+    helper.dropdown.set_hexpand(true);
+    helper.dropdown.update_property(&[
+        gtk::accessible::Property::Label(&i18n::text("Choose an enabled Browser Destination")),
+        gtk::accessible::Property::Description(&i18n::text(
+            "Choose an enabled Browser Destination",
+        )),
+    ]);
     fill_destination_choice_dropdown(&helper, destination, &choices.borrow());
     helper.dropdown.connect_selected_notify(glib::clone!(
         #[weak]
