@@ -367,6 +367,15 @@ msgstr ""
 msgid "All conditions below must match (AND)"
 msgstr ""
 
+msgid "Match any of these groups (OR)"
+msgstr ""
+
+msgid "When this rule matches"
+msgstr ""
+
+msgid "OR"
+msgstr ""
+
 msgid "Add AND condition"
 msgstr ""
 

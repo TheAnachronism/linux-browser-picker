@@ -424,6 +424,15 @@ msgstr "Remove OR group"
 msgid "All conditions below must match (AND)"
 msgstr "All conditions below must match (AND)"
 
+msgid "Match any of these groups (OR)"
+msgstr "Match any of these groups (OR)"
+
+msgid "When this rule matches"
+msgstr "When this rule matches"
+
+msgid "OR"
+msgstr "OR"
+
 msgid "Add AND condition"
 msgstr "Add AND condition"
 

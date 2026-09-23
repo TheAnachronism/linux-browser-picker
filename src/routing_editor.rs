@@ -87,6 +87,30 @@ impl ConditionKind {
             UrlCondition::Regex { .. } => Self::Regex,
         }
     }
+
+    fn shows_key(self) -> bool {
+        matches!(self, Self::QueryKey | Self::QueryValue)
+    }
+
+    fn shows_value(self) -> bool {
+        !matches!(self, Self::QueryKey)
+    }
+
+    fn shows_subdomains(self) -> bool {
+        matches!(self, Self::Host)
+    }
+
+    fn shows_case(self) -> bool {
+        matches!(
+            self,
+            Self::ExactPath
+                | Self::PathPrefix
+                | Self::QueryKey
+                | Self::QueryValue
+                | Self::Glob
+                | Self::Regex
+        )
+    }
 }
 
 #[derive(Clone)]
@@ -125,6 +149,7 @@ struct DestinationChoiceHelper {
 struct GroupWidgets {
     conditions: Rc<RefCell<Vec<ConditionWidgets>>>,
     row: gtk::Box,
+    separator: gtk::Box,
 }
 
 /// Everything `build_group` needs to create OR groups and wire their "Add"/"Remove" controls.
@@ -528,6 +553,8 @@ fn build_rule(
     enabled.set_active(rule.enabled);
     bind_toggle(&enabled, on_change);
     let id = entry(&rule.id, &i18n::text("Routing Rule ID"), on_change);
+    id.set_hexpand(false);
+    id.set_width_chars(16);
     let name = entry(&rule.name, &i18n::text("Routing Rule name"), on_change);
     let open_automatically = i18n::text("Open automatically");
     let preselect_in_picker = i18n::text("Preselect in Picker");
@@ -546,6 +573,8 @@ fn build_rule(
         &i18n::text("Action Browser Destination ID"),
         on_change,
     );
+    destination.set_hexpand(false);
+    destination.set_width_chars(18);
     let destination_helper = destination_choice_helper(&destination, destination_choices);
     let normal = i18n::text("Normal");
     let private = i18n::text("Private");
@@ -569,11 +598,13 @@ fn build_rule(
     identity.append(&enabled);
     identity.append(&id);
     identity.append(&name);
+    action.set_hexpand(false);
+    mode.set_hexpand(false);
     let action_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     action_row.set_hexpand(true);
     action_row.append(&action);
-    action_row.append(&destination);
     action_row.append(&destination_helper.dropdown);
+    action_row.append(&destination);
     action_row.append(&mode);
 
     let groups_box = gtk::Box::new(gtk::Orientation::Vertical, 6);
@@ -594,6 +625,7 @@ fn build_rule(
         groups_box.append(&widgets.row);
         groups.borrow_mut().push(widgets);
     }
+    refresh_group_separators(&groups);
     add_group.connect_clicked(glib::clone!(
         #[strong]
         group_ctx,
@@ -610,20 +642,25 @@ fn build_rule(
             );
             group_ctx.groups_box.append(&widgets.row);
             group_ctx.groups.borrow_mut().push(widgets);
+            refresh_group_separators(&group_ctx.groups);
             notify_change(&group_ctx.on_change);
         }
     ));
 
-    let body = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    let match_heading = heading_label(&i18n::text("Match any of these groups (OR)"));
+    let action_heading = heading_label(&i18n::text("When this rule matches"));
+    let body = gtk::Box::new(gtk::Orientation::Vertical, 9);
     body.set_hexpand(true);
     body.set_margin_top(9);
     body.set_margin_bottom(9);
     body.set_margin_start(9);
     body.set_margin_end(9);
     body.append(&identity);
-    body.append(&action_row);
+    body.append(&match_heading);
     body.append(&groups_box);
     body.append(&add_group);
+    body.append(&action_heading);
+    body.append(&action_row);
     let row = gtk::ListBoxRow::builder()
         .child(&body)
         .selectable(true)
@@ -645,15 +682,18 @@ fn build_rule(
 }
 
 fn build_group(group: ConditionGroup, ctx: &GroupEditorContext) -> GroupWidgets {
-    let row = gtk::Box::new(gtk::Orientation::Vertical, 3);
-    let heading = gtk::Label::builder()
-        .label(i18n::text("All conditions below must match (AND)"))
-        .xalign(0.0)
-        .build();
-    row.append(&heading);
-    let conditions_box = gtk::Box::new(gtk::Orientation::Vertical, 3);
+    let row = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    row.set_hexpand(true);
+    let separator = or_separator();
+    let inner = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    inner.set_margin_top(9);
+    inner.set_margin_bottom(9);
+    inner.set_margin_start(9);
+    inner.set_margin_end(9);
+    let conditions_box = gtk::Box::new(gtk::Orientation::Vertical, 6);
     let conditions = Rc::new(RefCell::new(Vec::new()));
     let add = gtk::Button::with_label(&i18n::text("Add AND condition"));
+    add.set_halign(gtk::Align::Start);
     let condition_ctx = ConditionEditorContext {
         on_change: ctx.on_change.clone(),
         conditions: conditions.clone(),
@@ -665,7 +705,7 @@ fn build_group(group: ConditionGroup, ctx: &GroupEditorContext) -> GroupWidgets 
         conditions_box.append(&widgets.row);
         conditions.borrow_mut().push(widgets);
     }
-    row.append(&conditions_box);
+    inner.append(&conditions_box);
     add.connect_clicked(glib::clone!(
         #[strong]
         condition_ctx,
@@ -683,10 +723,26 @@ fn build_group(group: ConditionGroup, ctx: &GroupEditorContext) -> GroupWidgets 
             notify_change(&condition_ctx.on_change);
         }
     ));
+    inner.append(&add);
     let remove = gtk::Button::with_label(&i18n::text("Remove OR group"));
     remove.update_property(&[gtk::accessible::Property::Label(&i18n::text(
         "Remove OR group",
     ))]);
+    let heading = gtk::Label::builder()
+        .label(i18n::text("All conditions below must match (AND)"))
+        .xalign(0.0)
+        .hexpand(true)
+        .build();
+    let title = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    title.set_hexpand(true);
+    title.append(&heading);
+    title.append(&remove);
+    let frame = gtk::Frame::new(None);
+    frame.set_hexpand(true);
+    frame.set_label_widget(Some(&title));
+    frame.set_child(Some(&inner));
+    row.append(&separator);
+    row.append(&frame);
     let ctx = ctx.clone();
     remove.connect_clicked(glib::clone!(
         #[weak]
@@ -704,13 +760,14 @@ fn build_group(group: ConditionGroup, ctx: &GroupEditorContext) -> GroupWidgets 
                     ctx.add_group.grab_focus();
                 },
             );
+            refresh_group_separators(&ctx.groups);
         }
     ));
-    let actions = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    actions.append(&add);
-    actions.append(&remove);
-    row.append(&actions);
-    GroupWidgets { conditions, row }
+    GroupWidgets {
+        conditions,
+        row,
+        separator,
+    }
 }
 
 fn build_condition(condition: UrlCondition, ctx: &ConditionEditorContext) -> ConditionWidgets {
@@ -801,6 +858,20 @@ fn build_condition(condition: UrlCondition, ctx: &ConditionEditorContext) -> Con
     bind_toggle(&option, on_change);
     bind_toggle(&insensitive, on_change);
     bind_toggle(&negate, on_change);
+    apply_condition_fields(kind.selected(), &key, &value, &option, &insensitive);
+    kind.connect_selected_notify(glib::clone!(
+        #[weak]
+        key,
+        #[weak]
+        value,
+        #[weak]
+        option,
+        #[weak]
+        insensitive,
+        move |kind| {
+            apply_condition_fields(kind.selected(), &key, &value, &option, &insensitive);
+        }
+    ));
     let fields = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     fields.set_hexpand(true);
     fields.append(&kind);
@@ -995,6 +1066,54 @@ fn notify_change(on_change: &ChangeCallback) {
     if let Some(callback) = on_change.borrow().clone() {
         callback();
     }
+}
+
+fn heading_label(text: &str) -> gtk::Label {
+    let label = gtk::Label::builder()
+        .label(text)
+        .xalign(0.0)
+        .wrap(true)
+        .build();
+    label.add_css_class("heading");
+    label
+}
+
+fn or_separator() -> gtk::Box {
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 9);
+    let left = gtk::Separator::new(gtk::Orientation::Horizontal);
+    left.set_hexpand(true);
+    left.set_valign(gtk::Align::Center);
+    let label = gtk::Label::builder().label(i18n::text("OR")).build();
+    label.add_css_class("dim-label");
+    label.add_css_class("heading");
+    let right = gtk::Separator::new(gtk::Orientation::Horizontal);
+    right.set_hexpand(true);
+    right.set_valign(gtk::Align::Center);
+    row.append(&left);
+    row.append(&label);
+    row.append(&right);
+    row.set_visible(false);
+    row
+}
+
+fn refresh_group_separators(groups: &Rc<RefCell<Vec<GroupWidgets>>>) {
+    for (index, group) in groups.borrow().iter().enumerate() {
+        group.separator.set_visible(index > 0);
+    }
+}
+
+fn apply_condition_fields(
+    selected: u32,
+    key: &gtk::Entry,
+    value: &gtk::Entry,
+    option: &gtk::CheckButton,
+    insensitive: &gtk::CheckButton,
+) {
+    let kind = ConditionKind::from_index(selected);
+    key.set_visible(kind.shows_key());
+    value.set_visible(kind.shows_value());
+    option.set_visible(kind.shows_subdomains());
+    insensitive.set_visible(kind.shows_case());
 }
 
 fn bind_toggle(button: &gtk::CheckButton, on_change: &ChangeCallback) {
