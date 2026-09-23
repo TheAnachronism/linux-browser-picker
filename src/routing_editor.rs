@@ -127,6 +127,7 @@ pub struct RoutingRuleEditor {
 
 #[derive(Clone)]
 struct RuleWidgets {
+    expander: adw::ExpanderRow,
     enabled: gtk::CheckButton,
     id: gtk::Entry,
     name: gtk::Entry,
@@ -216,7 +217,7 @@ impl RoutingRuleEditor {
         let rules = Rc::new(RefCell::new(Vec::new()));
         let destination_choices = Rc::new(RefCell::new(Vec::new()));
         for rule in existing {
-            let widgets = build_rule(rule.clone(), &on_change, &destination_choices);
+            let widgets = build_rule(rule.clone(), &on_change, &destination_choices, false);
             list.append(&widgets.row);
             rules.borrow_mut().push(widgets);
         }
@@ -318,7 +319,7 @@ impl RoutingRuleEditor {
                         mode: LaunchMode::Normal,
                     },
                 };
-                let widgets = build_rule(rule, &on_change, &destination_choices);
+                let widgets = build_rule(rule, &on_change, &destination_choices, true);
                 reorder_ui::attach_row_drag(
                     &widgets.row,
                     &widgets.drag_handle,
@@ -349,6 +350,7 @@ impl RoutingRuleEditor {
                     |removed| list.remove(&removed.row),
                     |next| {
                         list.select_row(Some(&next.row));
+                        next.expander.set_expanded(true);
                         next.destination.grab_focus();
                     },
                     || {},
@@ -403,7 +405,7 @@ impl RoutingRuleEditor {
         ))]);
         root.append(&explanation);
 
-        Self {
+        let editor = Self {
             root,
             sample,
             test,
@@ -412,7 +414,13 @@ impl RoutingRuleEditor {
             rules,
             destination_choices,
             on_change,
-        }
+        };
+        install_header_refresh(
+            &editor.on_change,
+            &editor.rules,
+            &editor.destination_choices,
+        );
+        editor
     }
 
     pub fn rules(&self) -> Vec<RoutingRule> {
@@ -420,7 +428,12 @@ impl RoutingRuleEditor {
     }
 
     pub fn connect_changed(&self, callback: impl Fn() + 'static) {
-        *self.on_change.borrow_mut() = Some(Rc::new(callback));
+        let rules = Rc::clone(&self.rules);
+        let destination_choices = Rc::clone(&self.destination_choices);
+        *self.on_change.borrow_mut() = Some(Rc::new(move || {
+            refresh_rule_headers(&rules, &destination_choices);
+            callback();
+        }));
     }
 
     pub fn set_destination_choices(&self, choices: &[(String, String)]) {
@@ -428,6 +441,7 @@ impl RoutingRuleEditor {
         for rule in self.rules.borrow().iter() {
             fill_destination_choice_dropdown(&rule.destination_helper, &rule.destination, choices);
         }
+        refresh_rule_headers(&self.rules, &self.destination_choices);
     }
 
     pub fn rewrite_destination_id(&self, from: &str, to: &str) {
@@ -439,6 +453,7 @@ impl RoutingRuleEditor {
                 rule.destination.set_text(to);
             }
         }
+        refresh_rule_headers(&self.rules, &self.destination_choices);
     }
 
     pub fn referenced_destination_ids(&self) -> HashSet<String> {
@@ -548,7 +563,10 @@ fn build_rule(
     rule: RoutingRule,
     on_change: &ChangeCallback,
     destination_choices: &Rc<RefCell<Vec<(String, String)>>>,
+    expanded: bool,
 ) -> RuleWidgets {
+    let title = rule_title(&rule);
+    let summary = rule_summary(&rule, &destination_choices.borrow());
     let enabled = gtk::CheckButton::with_label(&i18n::text("Enabled"));
     enabled.set_active(rule.enabled);
     bind_toggle(&enabled, on_change);
@@ -591,11 +609,6 @@ fn build_rule(
 
     let identity = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     identity.set_hexpand(true);
-    let drag_handle = reorder_ui::prepend_handle(
-        &identity,
-        &i18n::text_with("Reorder {name}", &[("{name}", &rule.name)]),
-    );
-    identity.append(&enabled);
     identity.append(&id);
     identity.append(&name);
     action.set_hexpand(false);
@@ -661,13 +674,31 @@ fn build_rule(
     body.append(&add_group);
     body.append(&action_heading);
     body.append(&action_row);
-    let row = gtk::ListBoxRow::builder()
-        .child(&body)
+
+    let prefix = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    let drag_handle = reorder_ui::prepend_handle(
+        &prefix,
+        &i18n::text_with("Reorder {name}", &[("{name}", &title)]),
+    );
+    let expander = adw::ExpanderRow::builder()
+        .title(&title)
+        .subtitle(&summary)
+        .subtitle_lines(2)
+        .expanded(expanded)
         .selectable(true)
-        .activatable(false)
         .build();
-    row.update_property(&[gtk::accessible::Property::Label(&rule.name)]);
+    expander.add_prefix(&prefix);
+    expander.add_suffix(&enabled);
+    let editor_row = gtk::ListBoxRow::builder()
+        .child(&body)
+        .activatable(false)
+        .selectable(false)
+        .build();
+    expander.add_row(&editor_row);
+    let row = expander.clone().upcast::<gtk::ListBoxRow>();
+    row.update_property(&[gtk::accessible::Property::Label(&title)]);
     RuleWidgets {
+        expander,
         enabled,
         id,
         name,
@@ -1065,6 +1096,158 @@ fn remove_and_refocus<T>(
 fn notify_change(on_change: &ChangeCallback) {
     if let Some(callback) = on_change.borrow().clone() {
         callback();
+    }
+}
+
+fn install_header_refresh(
+    on_change: &ChangeCallback,
+    rules: &Rc<RefCell<Vec<RuleWidgets>>>,
+    destination_choices: &Rc<RefCell<Vec<(String, String)>>>,
+) {
+    let rules = Rc::clone(rules);
+    let destination_choices = Rc::clone(destination_choices);
+    *on_change.borrow_mut() = Some(Rc::new(move || {
+        refresh_rule_headers(&rules, &destination_choices);
+    }));
+}
+
+fn refresh_rule_headers(
+    rules: &Rc<RefCell<Vec<RuleWidgets>>>,
+    destination_choices: &Rc<RefCell<Vec<(String, String)>>>,
+) {
+    let choices = destination_choices.borrow();
+    for rule in rules.borrow().iter() {
+        let collected = collect_rule(rule);
+        let title = rule_title(&collected);
+        rule.expander.set_title(&title);
+        rule.expander
+            .set_subtitle(&rule_summary(&collected, &choices));
+        rule.row
+            .update_property(&[gtk::accessible::Property::Label(&title)]);
+    }
+}
+
+fn rule_title(rule: &RoutingRule) -> String {
+    let name = rule.name.trim();
+    if name.is_empty() {
+        rule.id.clone()
+    } else {
+        name.to_owned()
+    }
+}
+
+fn rule_summary(rule: &RoutingRule, choices: &[(String, String)]) -> String {
+    let action = action_summary(&rule.action, choices);
+    let conditions = conditions_summary(&rule.groups);
+    let summary = if conditions.is_empty() {
+        action
+    } else {
+        i18n::text_with(
+            "{action} · {conditions}",
+            &[("{action}", &action), ("{conditions}", &conditions)],
+        )
+    };
+    if rule.enabled {
+        summary
+    } else {
+        i18n::text_with("Disabled · {summary}", &[("{summary}", &summary)])
+    }
+}
+
+fn action_summary(action: &RoutingAction, choices: &[(String, String)]) -> String {
+    let (open, destination, mode) = match action {
+        RoutingAction::Open { destination, mode } => (true, destination.as_str(), *mode),
+        RoutingAction::Preselect { destination, mode } => (false, destination.as_str(), *mode),
+    };
+    let label = choices
+        .iter()
+        .find(|(id, _)| id == destination)
+        .map(|(_, label)| label.as_str())
+        .filter(|label| !label.is_empty())
+        .unwrap_or(destination);
+    let action = if label.is_empty() {
+        if open {
+            i18n::text("Open automatically")
+        } else {
+            i18n::text("Preselect in Picker")
+        }
+    } else if open {
+        i18n::text_with("Open {label}", &[("{label}", label)])
+    } else {
+        i18n::text_with("Preselect {label}", &[("{label}", label)])
+    };
+    if mode == LaunchMode::Private {
+        i18n::text_with(
+            "{action} · {mode}",
+            &[("{action}", &action), ("{mode}", &i18n::text("Private"))],
+        )
+    } else {
+        action
+    }
+}
+
+fn conditions_summary(groups: &[ConditionGroup]) -> String {
+    let group_summaries: Vec<String> = groups
+        .iter()
+        .map(|group| {
+            join_with(
+                group.conditions.iter().map(compact_condition),
+                &i18n::text("AND"),
+            )
+        })
+        .filter(|summary| !summary.is_empty())
+        .collect();
+    join_with(group_summaries, &i18n::text("OR"))
+}
+
+fn join_with(parts: impl IntoIterator<Item = String>, joiner: &str) -> String {
+    let mut parts = parts.into_iter();
+    let Some(first) = parts.next() else {
+        return String::new();
+    };
+    parts.fold(first, |left, right| {
+        i18n::text_with(
+            "{left} {joiner} {right}",
+            &[("{left}", &left), ("{joiner}", joiner), ("{right}", &right)],
+        )
+    })
+}
+
+fn compact_condition(condition: &UrlCondition) -> String {
+    let kind = ConditionKind::from_condition(condition);
+    let (value, negate) = match condition {
+        UrlCondition::Scheme { value, negate } => (value.clone(), *negate),
+        UrlCondition::Host { value, negate, .. } => (value.clone(), *negate),
+        UrlCondition::Port { value, negate } => (value.to_string(), *negate),
+        UrlCondition::Path { value, negate, .. } => (value.clone(), *negate),
+        UrlCondition::QueryKey { key, negate, .. } => (key.clone(), *negate),
+        UrlCondition::QueryValue {
+            key, value, negate, ..
+        } => (
+            if key.is_empty() {
+                value.clone()
+            } else if value.is_empty() {
+                key.clone()
+            } else {
+                i18n::text_with("{key}={value}", &[("{key}", key), ("{value}", value)])
+            },
+            *negate,
+        ),
+        UrlCondition::Glob { value, negate, .. } => (value.clone(), *negate),
+        UrlCondition::Regex { value, negate, .. } => (value.clone(), *negate),
+    };
+    let description = if value.is_empty() {
+        kind.label()
+    } else {
+        i18n::text_with(
+            "{kind} {value}",
+            &[("{kind}", &kind.label()), ("{value}", &value)],
+        )
+    };
+    if negate {
+        i18n::text_with("NOT ({description})", &[("{description}", &description)])
+    } else {
+        description
     }
 }
 

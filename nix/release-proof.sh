@@ -784,6 +784,8 @@ PY
   xdotool windowfocus --sync "$window"
   inspect wait "Configuration" --timeout 20
   inspect activate "Rules"
+  inspect activate "Automatic"
+  inspect wait "Remove AND condition"
   inspect node "Remove AND condition" --role "button" --enabled
   inspect activate "Remove AND condition"
   inspect wait "condition groups must not be empty"

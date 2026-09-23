@@ -376,6 +376,30 @@ msgstr ""
 msgid "OR"
 msgstr ""
 
+msgid "AND"
+msgstr ""
+
+msgid "{left} {joiner} {right}"
+msgstr ""
+
+msgid "{kind} {value}"
+msgstr ""
+
+msgid "{key}={value}"
+msgstr ""
+
+msgid "{action} · {conditions}"
+msgstr ""
+
+msgid "{action} · {mode}"
+msgstr ""
+
+msgid "Disabled · {summary}"
+msgstr ""
+
+msgid "Preselect {label}"
+msgstr ""
+
 msgid "Add AND condition"
 msgstr ""
 

@@ -1260,6 +1260,8 @@ EOF
                       test -n "$window"
                       echo "reference-safe: window ready" >&2
                       python3 "$inspect" activate "Rules"
+                      python3 "$inspect" activate "Later"
+                      python3 "$inspect" wait "Remove OR group"
                       python3 "$inspect" assert \
                         "Remove Routing Rule" \
                         "Remove OR group" \
@@ -1288,6 +1290,8 @@ EOF
                       python3 "$inspect" activate "Destinations"
                       python3 "$inspect" disabled "Enable Browser Candidate Work Browser"
                       python3 "$inspect" activate "Rules"
+                      python3 "$inspect" activate "Later"
+                      python3 "$inspect" wait "Routing Rule ID"
                       python3 "$inspect" pointer "Routing Rule ID"
                       python3 "$inspect" activate "Remove Routing Rule"
                       sleep 0.2
@@ -1298,6 +1302,8 @@ EOF
                       python3 "$inspect" enabled "Enable Browser Candidate Work Browser"
                       python3 "$inspect" checked "Enable Browser Candidate Work Browser"
                       python3 "$inspect" activate "Rules"
+                      python3 "$inspect" activate "Automatic"
+                      python3 "$inspect" wait "Remove OR group"
                       python3 "$inspect" activate "Remove OR group"
                       sleep 0.2
                       python3 "$inspect" activate "Remove AND condition"

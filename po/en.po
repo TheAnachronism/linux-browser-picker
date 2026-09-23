@@ -433,6 +433,30 @@ msgstr "When this rule matches"
 msgid "OR"
 msgstr "OR"
 
+msgid "AND"
+msgstr "AND"
+
+msgid "{left} {joiner} {right}"
+msgstr "{left} {joiner} {right}"
+
+msgid "{kind} {value}"
+msgstr "{kind} {value}"
+
+msgid "{key}={value}"
+msgstr "{key}={value}"
+
+msgid "{action} · {conditions}"
+msgstr "{action} · {conditions}"
+
+msgid "{action} · {mode}"
+msgstr "{action} · {mode}"
+
+msgid "Disabled · {summary}"
+msgstr "Disabled · {summary}"
+
+msgid "Preselect {label}"
+msgstr "Preselect {label}"
+
 msgid "Add AND condition"
 msgstr "Add AND condition"
 
